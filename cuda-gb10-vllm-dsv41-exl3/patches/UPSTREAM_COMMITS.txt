@@ -2,3 +2,6 @@ tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark patch/exl3-tp3 fc725ecf10869c184f4
 vllm-project/vllm vllm/models/deepseek_v4_1/nvidia/model.py e47aa780bccf59f59dfa2cbb18e17a10b4fe69ba
 Zeuss5/cuda-exl3 6a1ffc34866e23f484574ce1922a8bca93eb33b2
 flashinfer-ai/flashinfer 07869c61ba581e6d6b8ad8d142f4a6c89b707cc1
+tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark runs/2026-09-14-speedrun/patches/dsv41-exl3-sr1/engram-fast.diff 6481da9d2235624c860c528c7bbb7296f1d9c2c5
+tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark runs/2026-09-14-speedrun/patches/idxsplit-draft/sparse_attn_indexer.idxsplit.diff c418998b19566d07e61190de592f32a2ebff2a20
+tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark runs/2026-09-19-speedrun2/patches/exl3-limit/limit.diff f6534dc6a5327219b7c23bd207ed279cfd7023e1

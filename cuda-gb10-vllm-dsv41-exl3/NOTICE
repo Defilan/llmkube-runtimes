@@ -12,6 +12,15 @@ Includes Kai's Engram-on-disk and SM12x page-size patches (credited in that repo
 bot-lab-21's DeepSeek-V4.1 overlay for cuda-exl3 (exl3_config.py, exl3_moe.py; MIT, published in
 bot-lab-21/DeepSeek-V4.1-Flash-EXL3-3.5bpw-Pollard).
 
+Also from tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark (MIT, same license text), applied on top of the exl3-tp3 set:
+  runs/2026-09-14-speedrun/patches/dsv41-exl3-sr1/engram-fast.diff at commit 6481da9d2235624c860c528c7bbb7296f1d9c2c5
+  (Engram fast staging, gated by DSV41_ENGRAM_FAST); runs/2026-09-14-speedrun/patches/idxsplit-draft/
+  sparse_attn_indexer.idxsplit.diff at commit c418998b19566d07e61190de592f32a2ebff2a20 (indexer prefill TP-split,
+  gated by DSV41_INDEXER_TP_SPLIT); and runs/2026-09-19-speedrun2/patches/exl3-limit/limit.diff at commit
+  f6534dc6a5327219b7c23bd207ed279cfd7023e1 (the `limit` argument on cuda-exl3's exl3_moe_glu_had_in, vendored as
+  patches/exl3-limit.diff and applied to the cuda-exl3 source before the build; clamp semantics follow bot-lab-21's
+  exl3_moe.py overlay). Both vLLM diffs modify vLLM files (Apache License 2.0).
+
 vllm-project/vllm, file vllm/models/deepseek_v4_1/nvidia/model.py at commit
 e47aa780bccf59f59dfa2cbb18e17a10b4fe69ba. Apache License 2.0.
 

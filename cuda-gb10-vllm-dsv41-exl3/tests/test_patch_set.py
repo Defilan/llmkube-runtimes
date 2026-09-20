@@ -12,7 +12,7 @@ def md5_prefix(p: Path) -> str:
 
 def test_every_listed_file_matches_md5sums():
     lines = [l.split() for l in (PATCHES / "MD5SUMS.txt").read_text().splitlines() if l.strip()]
-    assert len(lines) == 14, lines
+    assert len(lines) == 15, lines
     for want, name in lines:
         assert md5_prefix(PATCHES / name) == want, name
 
@@ -32,3 +32,15 @@ def test_baseline_covers_every_vllm_destination_in_mounts():
             continue
         assert dest in baseline, dest
     assert "models/deepseek_v4_1/nvidia/model.py" in baseline
+
+
+def test_vendored_levers_carry_their_gates_and_the_limit_diff_targets_the_kernel_sources():
+    """The three tonyd2wild levers applied on top of exl3-tp3 (issue #45): two env-gated vLLM files, one cuda-exl3 diff."""
+    engram = (PATCHES / "engram.py").read_text()
+    assert "DSV41_ENGRAM_FAST" in engram and "def memmaps" in engram, "engram-fast.diff is not applied"
+    idx = (PATCHES / "sparse_attn_indexer.py").read_text()
+    assert "DSV41_INDEXER_TP_SPLIT" in idx and "DSV41_INDEXER_TP_SPLIT_MIN" in idx, "idxsplit diff is not applied"
+    diff = (PATCHES / "exl3-limit.diff").read_text()
+    for f in ("src/cuda_exl3/csrc/bindings.cpp", "src/cuda_exl3/csrc/exl3_had.cuh", "src/cuda_exl3/csrc/hadamard.cu"):
+        assert f"+++ b/{f}" in diff, f
+    assert "float limit" in diff, "the diff should add the limit argument"
