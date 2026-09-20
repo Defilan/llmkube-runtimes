@@ -22,6 +22,9 @@ def test_cuda_exl3_kernel_and_plugin_entry_point():
     from cuda_exl3 import config, moe  # noqa: F401  (bot-lab-21's V4.1 overlay landed here)
     eps = {(e.name, e.value) for e in md.entry_points(group="vllm.general_plugins")}
     assert ("cuda_exl3", "cuda_exl3:register") in eps
+    # tonyd2wild's limit argument (patches/exl3-limit.diff): the same probe bot-lab-21's moe.py overlay runs at serve time
+    op = torch.ops.cuda_exl3_C.exl3_moe_glu_had_in
+    assert "limit" in str(getattr(op, "default", op)._schema), "cuda-exl3 was built without the limit argument"
 
 
 def test_patched_vllm_tree_imports_and_has_no_base_engram():

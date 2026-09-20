@@ -243,6 +243,17 @@ NCCL >= 2.30, which the base carries): NCCL otherwise pairs NICs by channel inde
 which a P0->P1 ring can never satisfy. Measured 2026-09-13: 23.2 GB/s bus bandwidth on a three-rank
 all-reduce, versus 11.3 on a single two-node leg.
 
+**Three levers from tonyd2wild's speed runs (2026-09-20, #45), on top of the TP3 set.** The cuda-exl3 `limit`
+argument is applied to the kernel source before the build (`patches/exl3-limit.diff`, MIT), so the SwiGLU clamp
+runs inside the MoE kernel instead of as two `clamp_` passes per layer per step, and the serve log no longer
+warns `compiled exl3_moe_glu_had_in has no 'limit' argument`. The other two are off by default and switch
+without a rebuild: `DSV41_ENGRAM_FAST=1` (Engram rows gathered through a numpy memmap and dequantized on the
+GPU; his ring measurement: prefill +16% to +48% under 100K tokens, -7% at 298K) and `DSV41_INDEXER_TP_SPLIT=1`
+(each rank computes the lightning indexer's top-k for a slice of the prefill rows, then one all-gather; the
+value must be identical on every node; +6% prefill at 131K, neutral below 40K). The vendored `engram.py` is
+byte-identical to the file his 2026-09-14 speed run shipped (md5 `e84c7305`). Tier-2 numbers for each gate
+land in the LLMKube ring sample as they are measured.
+
 arm64 only. First green build on `ubuntu-24.04-arm`: 30 minutes for the pull_request run (FlashInfer source
 build, cuda-exl3 compile and the serial JIT prewarm dominate; the tag run that also pushes and attests the
 candidate took 39). Tier-2 numbers on the ring, single stream, text only: prefill 1,137 tok/s at 49.7k

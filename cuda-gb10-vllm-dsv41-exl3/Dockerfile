@@ -65,6 +65,12 @@ set -eu
 SHA=6a1ffc34866e23f484574ce1922a8bca93eb33b2
 mkdir -p /opt/exl3-src
 curl -fsSL -m 600 "https://codeload.github.com/Zeuss5/cuda-exl3/tar.gz/$SHA" | tar xz -C /opt/exl3-src --strip-components=1
+# tonyd2wild's `limit` argument on exl3_moe_glu_had_in (MIT, patches/exl3-limit.diff; not upstream at 6a1ffc34): the
+# SwiGLU clamp runs inside the kernel's fp32 lambda instead of as two clamp_ kernels per MoE layer per step. The
+# exl3_moe.py overlay (5.4) probes the compiled schema and uses the argument when it is there. A rejected hunk fails
+# the build here rather than silently shipping the slow path.
+command -v patch >/dev/null || { apt-get update -q && apt-get install -y -q --no-install-recommends patch && rm -rf /var/lib/apt/lists/*; }
+patch -p1 -d /opt/exl3-src --forward --no-backup-if-mismatch < /opt/llmkube/patches/exl3-limit.diff
 cd /opt/exl3-src
 TORCH_CUDA_ARCH_LIST=12.1a MAX_JOBS="${MAX_JOBS}" pip install --no-deps --no-build-isolation -q .
 cd / && rm -rf /opt/exl3-src
@@ -79,7 +85,9 @@ import torch  # noqa: F401  (loads libc10/libtorch; cuda_exl3._C links against t
 import cuda_exl3, cuda_exl3._C  # noqa: F401
 eps = {(e.name, e.value) for e in md.entry_points(group="vllm.general_plugins")}
 assert ("cuda_exl3", "cuda_exl3:register") in eps, eps
-print("cuda_exl3 kernel loads; vllm.general_plugins registers cuda_exl3:register")
+op = torch.ops.cuda_exl3_C.exl3_moe_glu_had_in
+assert "limit" in str(getattr(op, "default", op)._schema), "cuda-exl3 built without the limit argument: patches/exl3-limit.diff did not take"
+print("cuda_exl3 kernel loads; vllm.general_plugins registers cuda_exl3:register; exl3_moe_glu_had_in has the limit argument")
 PY
 
 # ---- 5.5 prewarm the JIT modules under the runtime env ----
