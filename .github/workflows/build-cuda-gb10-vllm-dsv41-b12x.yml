@@ -71,7 +71,11 @@ jobs:
         run: |
           cd cuda-gb10-vllm-dsv41-b12x
           fail=0
-          for f in LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0 LICENSE.cutlass-BSD-3-Clause NOTICE; do
+          for f in LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0 LICENSE.cutlass-BSD-3-Clause NOTICE \
+                   licenses/LICENSE.flash-attention-BSD-3-Clause licenses/LICENSE.tml-fa4-BSD-3-Clause \
+                   licenses/LICENSE.FlashMLA-MIT licenses/LICENSE.DeepGEMM-MIT licenses/LICENSE.triton-MIT \
+                   licenses/LICENSE.FlashKDA-MIT licenses/LICENSE.DeepSelect-MIT licenses/LICENSE.MSA-MIT \
+                   licenses/LICENSE.qutlass-Apache-2.0; do
             [ -f "$f" ] || { echo "FAIL: $f missing; the license requires the notice to travel."; fail=1; }
           done
           for f in LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0; do
@@ -82,7 +86,7 @@ jobs:
             echo "FAIL: AGPL text found in this directory's material."; fail=1
           fi
           python3 -m venv /tmp/pyt && /tmp/pyt/bin/pip install -q pytest
-          /tmp/pyt/bin/python -m pytest -q -p no:cacheprovider tests/test_pins.py || { echo "FAIL: pins gate tests"; fail=1; }
+          /tmp/pyt/bin/python -m pytest -q -p no:cacheprovider tests/test_pins.py tests/test_deps_gate.py || { echo "FAIL: pins/deps gate tests"; fail=1; }
           exit $fail
 
       - name: Verify the base digest matches the Dockerfile
@@ -162,12 +166,12 @@ jobs:
           name: sbom-cuda-gb10-vllm-dsv41-b12x-${{ github.sha }}
           path: sbom.spdx.json
 
-      # --- Trusted refs only. Fork PRs build + gate above but never reach here:
-      # GITHUB_TOKEN is read-only for them and these steps are gated off
-      # pull_request. The candidate is unsigned-for-trust; the out-of-band GPU
+      # --- Trusted refs only: main and release tags. PRs (including fork PRs,
+      # whose GITHUB_TOKEN is read-only) and workflow_dispatch on any other
+      # branch build + gate above but never push or attest. The candidate is unsigned-for-trust; the out-of-band GPU
       # promoter smoke-tests it on a real GB10 ring before anything serves. ---
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
@@ -175,7 +179,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push candidate
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         run: |
           CAND="${IMAGE}:candidate-${GITHUB_SHA}"
           docker tag "${LOCAL}" "${CAND}"
@@ -185,7 +189,7 @@ jobs:
           echo "Pushed ${CAND} (${DIGEST})"
 
       - name: Attest build provenance
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-name: ${{ env.IMAGE }}

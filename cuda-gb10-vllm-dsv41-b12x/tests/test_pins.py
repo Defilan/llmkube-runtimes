@@ -6,6 +6,7 @@ behaves before the gate's verdict on the real tree is trusted.
 """
 from __future__ import annotations
 import hashlib
+import importlib.util
 import os
 import re
 import shutil
@@ -182,6 +183,47 @@ def test_malformed_pin_line_fails(image):
     f.write_text(f.read_text() + "tilelang 0.1.12\n")
     r = run_gate(image)
     assert r.returncode == 1 and "tilelang" in r.stderr
+
+
+def test_empty_commit_pin_file_fails(image):
+    (image["root"] / "patches" / "UPSTREAM_COMMITS.txt").write_text("# name repo commit\n")
+    r = run_gate(image)
+    assert r.returncode == 1
+    assert "vllm: no entry in UPSTREAM_COMMITS.txt" in r.stderr and "b12x: no entry in UPSTREAM_COMMITS.txt" in r.stderr
+
+
+def test_commit_pin_file_missing_one_entry_fails(image):
+    f = image["root"] / "patches" / "UPSTREAM_COMMITS.txt"
+    f.write_text("\n".join(l for l in f.read_text().splitlines() if not l.startswith("b12x ")) + "\n")
+    r = run_gate(image)
+    assert r.returncode == 1 and "b12x: no entry in UPSTREAM_COMMITS.txt" in r.stderr and "vllm:" not in r.stderr
+
+
+def test_empty_dist_pin_file_fails(image):
+    (image["root"] / "patches" / "PINNED_DISTS.txt").write_text("# dist version [sha256 url]\n")
+    r = run_gate(image)
+    assert r.returncode == 1
+    for dist in ("torch", "flashinfer-python", "b12x"):
+        assert f"{dist}: no entry in PINNED_DISTS.txt" in r.stderr, r.stderr
+
+
+def test_lookalike_origin_fails(image):
+    _git(image["src"] / "b12x", "remote", "set-url", "origin", "https://github.com/local-inference-lab/b12x-evil.git")
+    r = run_gate(image)
+    assert r.returncode == 1 and "b12x-evil" in r.stderr
+
+
+def test_origin_match_is_exact_across_url_forms():
+    spec = importlib.util.spec_from_file_location("pins_gate", GATE)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    repo = "local-inference-lab/vllm"
+    for ok in ("https://github.com/local-inference-lab/vllm.git", "https://github.com/local-inference-lab/vllm",
+               "git@github.com:local-inference-lab/vllm.git", "https://github.com/Local-Inference-Lab/vllm/"):
+        assert gate.origin_matches(ok, repo), ok
+    for bad in ("https://github.com/local-inference-lab/vllm-evil.git", "https://github.com/x/local-inference-lab/vllm",
+                "https://gitlab.com/local-inference-lab/vllm.git", "https://github.com/local-inference-lab/vllm.git.evil"):
+        assert not gate.origin_matches(bad, repo), bad
 
 
 # ---- the real pin files in this directory ----

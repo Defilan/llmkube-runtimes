@@ -14,6 +14,9 @@ Run at build (after every install) and again by the Tier-1 gate against the ship
                         installed vllm's version must carry the fork commit (setuptools-scm's +g<hash>).
   MD5SUMS.txt           "md5-prefix file" for vendored files in patches/; an empty list is valid.
 
+Both pin files must name what this image is (vllm and b12x commits; torch, flashinfer-python and b12x versions): an
+emptied or truncated file fails rather than checking nothing. Origins must be exactly the pinned GitHub repo.
+
 Every failure names the pin it broke. Exit 0 clean, 1 on any failure, 2 on usage.
 """
 from __future__ import annotations
@@ -28,6 +31,9 @@ import sysconfig
 from pathlib import Path
 
 COMMIT_ENV = {"vllm": "VLLM_FORK_COMMIT", "b12x": "B12X_COMMIT"}
+# An emptied or truncated pin file must not pass by checking nothing.
+REQUIRED_COMMITS = ("vllm", "b12x")
+REQUIRED_DISTS = ("torch", "flashinfer-python", "b12x")
 HEX40 = re.compile(r"[0-9a-f]{40}")
 HEX64 = re.compile(r"[0-9a-f]{64}")
 
@@ -45,6 +51,16 @@ def _git(repo: Path, *args: str) -> str:
     if r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()}")
     return r.stdout.strip()
+
+
+def origin_matches(origin: str, repo: str) -> bool:
+    """Exact GitHub repo match over https or ssh remotes, so local-inference-lab/vllm-evil is not vllm."""
+    o = origin.strip().rstrip("/")
+    o = o[:-4] if o.endswith(".git") else o
+    for prefix in ("https://github.com/", "git@github.com:", "ssh://git@github.com/"):
+        if o.startswith(prefix):
+            return o[len(prefix):].lower() == repo.lower()
+    return False
 
 
 def installed(site: Path, dist: str) -> list[str]:
@@ -75,7 +91,7 @@ def check_commits(root: Path, src: Path, site: Path) -> tuple[list[str], dict[st
         if head != commit:
             errors.append(f"{name}: {checkout} is at {head}, UPSTREAM_COMMITS pins {commit} ({repo})")
             continue
-        if repo not in origin:
+        if not origin_matches(origin, repo):
             errors.append(f"{name}: {checkout} origin is {origin}, UPSTREAM_COMMITS pins repo {repo}")
         if dirty:
             errors.append(f"{name}: {checkout} has modified tracked files: {' '.join(dirty.split())}")
@@ -88,12 +104,20 @@ def check_commits(root: Path, src: Path, site: Path) -> tuple[list[str], dict[st
                 errors.append(f"{name}: {rel} is tracked at {commit[:12]} but not installed in {site}")
             elif dst.read_bytes() != (checkout / rel).read_bytes():
                 errors.append(f"{name}: installed {rel} differs from {commit[:12]}")
+    for name in REQUIRED_COMMITS:
+        if name not in pins:
+            errors.append(f"{name}: no entry in UPSTREAM_COMMITS.txt; the image cannot be checked against a pin")
     return errors, pins
 
 
 def check_dists(root: Path, site: Path) -> list[str]:
     errors: list[str] = []
-    for row in _rows(root / "patches" / "PINNED_DISTS.txt"):
+    rows = _rows(root / "patches" / "PINNED_DISTS.txt")
+    names = {_norm(r[0]) for r in rows}
+    for dist in REQUIRED_DISTS:
+        if _norm(dist) not in names:
+            errors.append(f"{dist}: no entry in PINNED_DISTS.txt; the image cannot be checked against a pin")
+    for row in rows:
         if len(row) not in (2, 4) or (len(row) == 4 and not HEX64.fullmatch(row[2])):
             errors.append(f"{row[0]}: malformed PINNED_DISTS line {' '.join(row)!r} (want: dist version [sha256 url])")
             continue

@@ -15,9 +15,18 @@ for f in LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apac
   run bash -c "grep -q 'Apache License' /opt/llmkube/$f && grep -q 'Version 2.0, January 2004' /opt/llmkube/$f"
 done
 run bash -c "grep -q 'Redistribution and use in source and binary forms' /opt/llmkube/LICENSE.cutlass-BSD-3-Clause"
+# Everything the fork's CMake compiles into vllm/_C, at the pinned revisions (NOTICE cites each source URL).
+for f in LICENSE.flash-attention-BSD-3-Clause LICENSE.tml-fa4-BSD-3-Clause; do
+  run bash -c "grep -q 'Redistribution and use in source and binary forms' /opt/llmkube/licenses/$f"
+done
+for f in LICENSE.FlashMLA-MIT LICENSE.DeepGEMM-MIT LICENSE.triton-MIT LICENSE.FlashKDA-MIT LICENSE.DeepSelect-MIT LICENSE.MSA-MIT; do
+  run bash -c "grep -q 'Permission is hereby granted' /opt/llmkube/licenses/$f"
+done
+run bash -c "grep -q 'Apache License' /opt/llmkube/licenses/LICENSE.qutlass-Apache-2.0"
 run bash -c '! grep -rli "GNU AFFERO" /opt/llmkube/patches /opt/llmkube/build /opt/llmkube/tests'
 run bash -c '! grep -rli --exclude-dir=.git "GNU AFFERO" /src/vllm /src/b12x'
-echo "PASS: receipt, stamp, freeze, NOTICE, all four license texts present; no AGPL text in the image's own material or either source tree"
+run python3 /opt/llmkube/build/deps_gate.py
+echo "PASS: receipt, stamp, freeze, NOTICE, the four top-level and nine compiled-in license texts present; no AGPL text in the image's own material, either source tree, or any installed distribution's license metadata; no pip check conflict on a pinned package"
 
 echo "== pins gate (checkouts at the pinned commits, installed trees identical, dist versions, install record) =="
 run python3 /opt/llmkube/build/pins_gate.py --site /usr/local/lib/python3.12/dist-packages
