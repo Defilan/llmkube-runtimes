@@ -73,3 +73,12 @@ def test_licenses_dir_is_exactly_what_notice_cites():
     text = notice.read_text()
     for n in names:
         assert f"licenses/{n}" in text, f"NOTICE does not cite licenses/{n}"
+
+
+def test_a_crashed_or_silent_pip_check_fails_the_gate(monkeypatch, tmp_path, capsys):
+    import subprocess
+    for rc, out in ((-9, ""), (2, "Traceback"), (1, "")):
+        monkeypatch.setattr(deps_gate.subprocess, "run",
+                            lambda *a, rc=rc, out=out, **k: subprocess.CompletedProcess(a, rc, out, ""))
+        assert deps_gate.main(["deps_gate", "--root", str(tmp_path)]) == 1
+        assert "without a usable report" in capsys.readouterr().err
