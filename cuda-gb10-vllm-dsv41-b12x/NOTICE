@@ -1,0 +1,54 @@
+NOTICE for llmkube-vllm-cuda-gb10-dsv41-b12x
+=============================================
+
+This runtime image is Apache-2.0 (the llmkube-runtimes repository license) and incorporates
+third-party material under the licenses below. Attribution is a condition of those licenses.
+
+Vendored material (cuda-gb10-vllm-dsv41-b12x/patches/)
+------------------------------------------------------
+None. The directory holds pins only (UPSTREAM_COMMITS.txt, PINNED_DISTS.txt, MD5SUMS.txt). No upstream
+source file is overlaid: the vLLM fork pads DeepSeek-V4.1 attention for tensor-parallel 3 by itself.
+
+Built from source at a pinned commit
+------------------------------------
+local-inference-lab/vllm   Apache-2.0   https://github.com/local-inference-lab/vllm   commit ec49d5781a0ebf7960c7711ac3e0f42376b1a127
+                                        A fork of vllm-project/vllm (Apache-2.0). License reproduced in LICENSE.vllm-Apache-2.0.
+                                        The pinned checkout is kept in the image at /src/vllm.
+local-inference-lab/b12x   Apache-2.0   https://github.com/local-inference-lab/b12x   commit 0d6600e64955114cad44cdee94c764a8001221e2
+                                        (b12x 1.3.0, Luke Alonso). License reproduced in LICENSE.b12x-Apache-2.0.
+                                        The pinned checkout is kept in the image at /src/b12x.
+
+Compiled into the vLLM fork's extensions (fetched by its CMake build at the revisions the fork pins)
+---------------------------------------------------------------------------------------------------
+NVIDIA/cutlass                 BSD-3-Clause   v4.7.1; text in LICENSE.cutlass-BSD-3-Clause
+vllm-project/flash-attention   BSD-3-Clause   506341a143fcabd4bb79052a7605ada727d6b3f5
+vllm-project/FlashMLA          MIT            0eee43b12f034b657133cf2afca6a72ebb6efccf
+vllm-project/DeepGEMM          MIT            ad1f1726aa540a76c1d26d6a120effb8de21eaa4
+IST-DASLab/qutlass             Apache-2.0     e74319e3405ce6d71965732880f5dc1f52371f64
+triton-lang/triton             MIT            v3.5.1 (triton_kernels)
+vllm-project/FlashKDA          MIT            b59532f1f464fbd536272780e30df5bf6a2ccc02
+vllm-project/DeepSelect        MIT            d96d33afe1fab0d6066da49cdc91e64c2bee65ea
+vllm-project/MSA               MIT            f355c37eb4e1413f21ee2ad8bbad25079e6bef9d
+vllm-project/tml-fa4           BSD-3-Clause   75765e76a9c2c012c1f6ecd64577eb646eb4d303
+These are the same components upstream vLLM wheels carry; which of them produce code for sm_121a is decided by
+the fork's CMake architecture gates.
+
+Prebuilt wheels installed by sha256 (patches/PINNED_DISTS.txt)
+--------------------------------------------------------------
+FlashInfer 0.6.18.post1   Apache-2.0   flashinfer-python, flashinfer-cubin, flashinfer-jit-cache (cu130, aarch64),
+                                       https://github.com/flashinfer-ai/flashinfer tag v0.6.18.post1. License, with its
+                                       own third-party summary (cutlass BSD-3-Clause, spdlog MIT), reproduced in
+                                       LICENSE.flashinfer-Apache-2.0.
+
+Runtime dependencies resolved from PyPI
+---------------------------------------
+The fork's requirements/cuda.txt and b12x's pyproject.toml are installed as declared; /opt/llmkube/pip-freeze.txt
+records the exact set. Of note: nvidia-cutlass-dsl 4.7.1 and its -libs packages are distributed by NVIDIA under
+NVIDIA's own license (PyPI classifier "Other/Proprietary License"), as the base image's 4.6.2 already is.
+
+Base image
+----------
+vLLM   Apache-2.0   vllm/vllm-openai:deepseekv41-flash-0909-arm64, pinned by digest in the Dockerfile. Its vLLM
+                    package is uninstalled and replaced by the fork.
+
+Model artifacts are NOT in this image. deepseek-ai/DeepSeek-V4.1-Flash is MIT and is staged by the InferenceService.

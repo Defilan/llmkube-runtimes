@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# DRAFT, not applied by CI. One-off BuildKit Job that builds cuda-gb10-vllm-dsv41-b12x on a DGX Spark to measure the
+# from-source vLLM fork compile (wall time, peak memory) before choosing the CI route (see the directory README).
+#
+# It runs two builds in one buildkitd state dir, so the second reuses the first's compile:
+#   1. --target vllm-wheel, exported to the node: the fork's wheel, its .sha256 and vllm-install.txt. This is the
+#      artifact the wheel fallback (VLLM_WHEEL_URL + VLLM_WHEEL_SHA256) would publish.
+#   2. the full image, pushed to a scratch tag, then gated with scripts/vllm-gb10-dsv41-b12x-gate.sh from a machine
+#      with docker.
+# Fill in before applying: NAMESPACE, the registry in SCRATCH_IMAGE, the push secret, and the git ref.
+#   kubectl --context shadowstack -n NAMESPACE create secret generic dsv41-b12x-push --from-file=config.json=<docker config>
+#   kubectl --context shadowstack -n NAMESPACE apply -f docs/cuda-gb10-vllm-dsv41-b12x-spark-build.yaml
+#   kubectl --context shadowstack -n NAMESPACE logs -f job/dsv41-b12x-spark-build -c build
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dsv41-b12x-spark-build
+  namespace: NAMESPACE
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: ahazidgx3
+      initContainers:
+        - name: checkout
+          image: alpine/git:2.47.2@sha256:062a01ad7a0eb17cff382bc5e26086b4d710e56dfdfdf001109a49b6d9bd378c
+          env:
+            - name: REPO
+              value: https://github.com/Defilan/llmkube-runtimes.git
+            - name: REF
+              value: feat/cuda-gb10-vllm-dsv41-b12x
+          command: ["/bin/sh", "-c"]
+          args:
+            - git clone -q --depth 1 --branch "$REF" "$REPO" /work/repo && git -C /work/repo log -1 --format='%H %s'
+          volumeMounts:
+            - { name: work, mountPath: /work }
+      containers:
+        - name: build
+          image: moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          securityContext:
+            privileged: true
+          env:
+            - name: SCRATCH_IMAGE
+              value: REGISTRY/llmkube-vllm-cuda-gb10-dsv41-b12x:spark-scratch
+            # 64 GiB limit / ~6 GiB per nvcc process on vLLM's heaviest translation units.
+            - name: MAX_JOBS
+              value: "8"
+            - name: DOCKER_CONFIG
+              value: /docker
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              ctx=/work/repo/cuda-gb10-vllm-dsv41-b12x
+              common="--frontend dockerfile.v0 --local context=$ctx --local dockerfile=$ctx --opt build-arg:MAX_JOBS=$MAX_JOBS --progress plain"
+              t0=$(date +%s)
+              buildctl-daemonless.sh build $common --opt target=vllm-wheel --output type=local,dest=/out
+              t1=$(date +%s)
+              buildctl-daemonless.sh build $common --output type=image,name="$SCRATCH_IMAGE",push=true
+              t2=$(date +%s)
+              echo "MEASURE wheel_stage_seconds=$((t1 - t0)) image_seconds=$((t2 - t1)) total_seconds=$((t2 - t0))"
+              echo "MEASURE memory_peak_bytes=$(cat /sys/fs/cgroup/memory.peak 2>/dev/null || echo unknown)"
+              ls -l /out && cat /out/vllm-install.txt /out/*.sha256
+          resources:
+            requests: { cpu: "16", memory: 48Gi }
+            limits: { memory: 64Gi }
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: out, mountPath: /out }
+            - { name: push, mountPath: /docker, readOnly: true }
+            - { name: buildkit, mountPath: /var/lib/buildkit }
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: buildkit
+          emptyDir: {}
+        - name: out
+          hostPath: { path: /var/tmp/dsv41-b12x-wheel, type: DirectoryOrCreate }
+        - name: push
+          secret: { secretName: dsv41-b12x-push }
