@@ -113,3 +113,26 @@ def test_b12x_loader_check_upstream_launcher_runs():
     loader_check = ('from importlib.metadata import entry_points; raise SystemExit(not any(ep.name == "b12x_loader" '
                     'for ep in entry_points(group="vllm.general_plugins")))')
     assert subprocess.run([sys.executable, "-c", loader_check]).returncode == 0
+
+
+COMPILED_IN = {
+    "LICENSE.flash-attention-BSD-3-Clause": "Redistribution and use in source and binary forms",
+    "LICENSE.tml-fa4-BSD-3-Clause": "Redistribution and use in source and binary forms",
+    "LICENSE.FlashMLA-MIT": "Permission is hereby granted",
+    "LICENSE.DeepGEMM-MIT": "Permission is hereby granted",
+    "LICENSE.triton-MIT": "Permission is hereby granted",
+    "LICENSE.FlashKDA-MIT": "Permission is hereby granted",
+    "LICENSE.DeepSelect-MIT": "Permission is hereby granted",
+    "LICENSE.MSA-MIT": "Permission is hereby granted",
+    "LICENSE.qutlass-Apache-2.0": "Apache License",
+}
+
+
+def test_attribution_for_everything_compiled_into_vllm_C_travels():
+    lic = Path("/opt/llmkube/licenses")
+    assert {p.name for p in lic.iterdir()} == set(COMPILED_IN), sorted(p.name for p in lic.iterdir())
+    for name, marker in COMPILED_IN.items():
+        assert marker in (lic / name).read_text(), name
+    for top in ("NOTICE", "LICENSE.vllm-Apache-2.0", "LICENSE.b12x-Apache-2.0", "LICENSE.flashinfer-Apache-2.0",
+                "LICENSE.cutlass-BSD-3-Clause"):
+        assert (Path("/opt/llmkube") / top).is_file(), top

@@ -7,7 +7,10 @@
 # Unlike the EXL3 sibling (stock vLLM plus a small overlay), the fork is BUILT FROM SOURCE at a pinned commit and
 # replaces the base's vLLM outright. No source patches: the fork pads V4.1's 64 heads / 8 output groups to 72 / 9 for
 # TP3 by itself (vllm/model_executor/models/config.py, DeepseekV41ForCausalLMConfig.update_model_config_for_parallelism).
-# Everything built or vendored here is Apache-2.0, BSD-3-Clause or MIT; nothing AGPL. See NOTICE.
+# What is built or vendored here is Apache-2.0, BSD-3-Clause or MIT, and nothing is AGPL (build/deps_gate.py scans
+# every installed distribution). The image ALSO carries NVIDIA-proprietary components under NVIDIA's licenses: the
+# CUDA runtime and toolkit pieces from the base, and nvidia-cutlass-dsl 4.7.1 (+ libs), which the fork and b12x
+# require and the base already ships at 4.6.2. See NOTICE.
 #
 #   base        vllm/vllm-openai deepseekv41-flash-0909-arm64, by digest   Apache-2.0   torch 2.13.0+cu130, CUDA 13.0
 #   vLLM fork   local-inference-lab/vllm ec49d578                          Apache-2.0   compiled here for sm_121a
@@ -54,6 +57,10 @@ EOT
 # Compile parallelism: the workflow derives MAX_JOBS from the runner's RAM; 2 is upstream's own default
 # (docker/versions.json) and fits 16 GB. NVCC_THREADS parallelises across gencode targets and this builds exactly
 # one (12.1a), so more threads only add memory.
+# CUDA dev headers: the base is a runtime image (nvcc, cudart, nvrtc-dev, curand-dev, cublas-dev only; the fork's own
+# image compiles in a full-toolkit builder). torch's ATen/cuda/CUDAContextLight.h includes <cusparse.h> and
+# <cusolverDn.h>, which the fork's csrc pulls in via ATen/cuda/CUDAContext.h. The compile path installs the minimal
+# -dev set, pinned to CUDA 13.0 Update 3 in NVIDIA's ubuntu2404/sbsa repo, in this stage only (not shipped).
 FROM src AS vllm-build
 ARG MAX_JOBS=2
 ARG NVCC_THREADS=1
@@ -68,9 +75,17 @@ if [ -n "${VLLM_WHEEL_URL}" ]; then
   echo "${VLLM_WHEEL_SHA256}  /tmp/dist/${VLLM_WHEEL_URL##*/}" | sha256sum -c -
   mode=wheel; origin="${VLLM_WHEEL_URL}"
 else
+  /usr/local/cuda/bin/nvcc --version | grep -q 'release 13\.0,' || { echo "base CUDA is not 13.0; re-pin the -dev set" >&2; exit 1; }
+  apt-get update -q
+  apt-get install -y -q --no-install-recommends --allow-change-held-packages \
+    libcusparse-dev-13-0=12.6.3.3-1 libcusolver-dev-13-0=12.0.4.66-1 libcufft-dev-13-0=12.0.0.61-1 \
+    cuda-culibos-dev-13-0=13.0.85-1 cuda-nvtx-13-0=13.0.85-1 cuda-profiler-api-13-0=13.0.85-1
+  rm -rf /var/lib/apt/lists/*
+  test -f /usr/local/cuda/include/cusparse.h && test -f /usr/local/cuda/include/cusolverDn.h
   cd /src/vllm
   python3 use_existing_torch.py --prefix
   pip list --format=freeze | grep -iE '^(torch|torchvision|torchaudio|triton)==' > /tmp/keep.txt
+  grep -q '^torch==' /tmp/keep.txt || { echo "constraints lack torch==; pip list printed it another way" >&2; exit 1; }
   pip install -q -c /tmp/keep.txt -r requirements/build/cuda.txt
   VLLM_TARGET_DEVICE=cuda TORCH_CUDA_ARCH_LIST=12.1a MAX_JOBS="${MAX_JOBS}" NVCC_THREADS="${NVCC_THREADS}" \
     python3 setup.py bdist_wheel --dist-dir=/tmp/dist --py-limited-api=cp38
@@ -97,6 +112,10 @@ ENV D=/usr/local/lib/python3.12/dist-packages
 COPY patches /opt/llmkube/patches
 COPY build /opt/llmkube/build
 COPY tests /opt/llmkube/tests
+# Attribution first, so the in-image tests can check it: the four top-level texts plus licenses/ (every component
+# the fork's CMake compiles into vllm/_C, at the revision it pins).
+COPY NOTICE LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0 LICENSE.cutlass-BSD-3-Clause /opt/llmkube/
+COPY licenses /opt/llmkube/licenses
 
 # ---- 3.1 FlashInfer 0.6.18.post1, the fork's pin (requirements/cuda.txt, docker/Dockerfile FLASHINFER_VERSION) ----
 # All three are wheels already built for aarch64/cu130 (python and cubin are py3-none-any), so nothing compiles here.
@@ -122,8 +141,11 @@ EOT
 # re-hashed here and must match what the build stage recorded.
 RUN --mount=type=bind,from=vllm-build,source=/tmp/dist,target=/tmp/dist <<'EOT'
 set -eu
-pip list --format=freeze | grep -iE '^(torch|torchvision|torchaudio|triton|flashinfer-[a-z-]+)==' > /opt/llmkube/constraints.txt
+pip list --format=freeze | grep -iE '^(torch|torchvision|torchaudio|triton|flashinfer[-_][a-z_-]+)==' > /opt/llmkube/constraints.txt
 cat /opt/llmkube/constraints.txt
+if ! grep -qi '^torch==' /opt/llmkube/constraints.txt || ! grep -qiE '^flashinfer[-_]python==' /opt/llmkube/constraints.txt; then
+  echo "constraints file is missing torch== or flashinfer-python==" >&2; exit 1
+fi
 whl="$(ls /tmp/dist/vllm-*.whl)"
 read -r _mode sha _origin < /tmp/dist/vllm-install.txt
 test "$(sha256sum "$whl" | cut -d' ' -f1)" = "$sha" || { echo "vllm wheel does not match the build stage's record" >&2; exit 1; }
@@ -134,10 +156,11 @@ rm -rf /root/.cache/pip
 EOT
 
 # ---- 3.3 b12x at its pinned commit, with its dependency pins (cutlass-dsl 4.7.1 and libs, apache-tvm-ffi <0.2) ----
-RUN pip install -q -c /opt/llmkube/constraints.txt /src/b12x && git -C /src/b12x clean -fdxq && rm -rf /root/.cache/pip && (pip check || true)
+RUN pip install -q -c /opt/llmkube/constraints.txt /src/b12x && git -C /src/b12x clean -fdxq && rm -rf /root/.cache/pip
 
-# ---- 3.4 pins gate: checkouts, installed trees, dist versions, install record (build ARGs are in the env here) ----
-RUN python3 /opt/llmkube/build/pins_gate.py --site "$D"
+# ---- 3.4 pins gate (checkouts, installed trees, dist versions, install record; build ARGs are in the env here) and
+# deps gate (pip check conflicts touching a pinned package, AGPL in any installed distribution's license metadata) ----
+RUN python3 /opt/llmkube/build/pins_gate.py --site "$D" && python3 /opt/llmkube/build/deps_gate.py
 
 # ---- 3.5 prewarm: import the V4.1 serve path, provision the b12x compile cache ----
 # b12x compiles its CuTe-DSL kernels per shape on the GPU at first serve; they land in B12X_COMPILE_CACHE_DIR, which
@@ -152,16 +175,15 @@ ENV B12X_COMPILE_CACHE_DIR=/opt/llmkube/b12x-cache \
 RUN mkdir -p "$B12X_COMPILE_CACHE_DIR" && chmod 1777 "$B12X_COMPILE_CACHE_DIR" && python3 /opt/llmkube/build/prewarm.py
 
 # ---- 3.6 in-image tests (ours, plus the fork's own TP3 padding test from /src/vllm) ----
-RUN pip install -q pytest && DSV41_IN_IMAGE=1 python3 -m pytest -q -p no:cacheprovider /opt/llmkube/tests
+RUN pip install -q pytest==9.1.1 && DSV41_IN_IMAGE=1 python3 -m pytest -q -p no:cacheprovider /opt/llmkube/tests
 
-# ---- 3.7 receipts, attribution, entrypoint ----
-COPY NOTICE LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0 LICENSE.cutlass-BSD-3-Clause /opt/llmkube/
+# ---- 3.7 receipts, entrypoint ----
 RUN bash /opt/llmkube/build/receipt.sh
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/dsv41-entrypoint.sh
 
 LABEL org.opencontainers.image.title="llmkube-vllm-cuda-gb10-dsv41-b12x" \
       org.opencontainers.image.source="https://github.com/defilantech/llmkube-runtimes" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause AND MIT AND LicenseRef-NVIDIA-Proprietary" \
       org.opencontainers.image.description="local-inference-lab vLLM fork + b12x for DeepSeek-V4.1-Flash at TP3 across a three-DGX-Spark ring (GB10, sm_121a)"
 
 ENTRYPOINT ["/usr/local/bin/dsv41-entrypoint.sh"]

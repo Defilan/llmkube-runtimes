@@ -1,8 +1,9 @@
 NOTICE for llmkube-vllm-cuda-gb10-dsv41-b12x
 =============================================
 
-This runtime image is Apache-2.0 (the llmkube-runtimes repository license) and incorporates
-third-party material under the licenses below. Attribution is a condition of those licenses.
+The llmkube-runtimes material in this image (build scripts, tests, entrypoint) is Apache-2.0, the repository
+license. The image also incorporates third-party material under the licenses below, including NVIDIA-proprietary
+components (see "NVIDIA-proprietary components"). Attribution is a condition of those licenses.
 
 Vendored material (cuda-gb10-vllm-dsv41-b12x/patches/)
 ------------------------------------------------------
@@ -20,16 +21,29 @@ local-inference-lab/b12x   Apache-2.0   https://github.com/local-inference-lab/b
 
 Compiled into the vLLM fork's extensions (fetched by its CMake build at the revisions the fork pins)
 ---------------------------------------------------------------------------------------------------
-NVIDIA/cutlass                 BSD-3-Clause   v4.7.1; text in LICENSE.cutlass-BSD-3-Clause
-vllm-project/flash-attention   BSD-3-Clause   506341a143fcabd4bb79052a7605ada727d6b3f5
-vllm-project/FlashMLA          MIT            0eee43b12f034b657133cf2afca6a72ebb6efccf
-vllm-project/DeepGEMM          MIT            ad1f1726aa540a76c1d26d6a120effb8de21eaa4
-IST-DASLab/qutlass             Apache-2.0     e74319e3405ce6d71965732880f5dc1f52371f64
-triton-lang/triton             MIT            v3.5.1 (triton_kernels)
-vllm-project/FlashKDA          MIT            b59532f1f464fbd536272780e30df5bf6a2ccc02
-vllm-project/DeepSelect        MIT            d96d33afe1fab0d6066da49cdc91e64c2bee65ea
-vllm-project/MSA               MIT            f355c37eb4e1413f21ee2ad8bbad25079e6bef9d
-vllm-project/tml-fa4           BSD-3-Clause   75765e76a9c2c012c1f6ecd64577eb646eb4d303
+Each text is reproduced from the upstream repository's license file at exactly that revision, and ships in the image
+at /opt/llmkube/licenses/.
+
+NVIDIA/cutlass                 BSD-3-Clause   tag v4.7.1 (CMakeLists.txt CUTLASS_REVISION)
+    https://github.com/NVIDIA/cutlass/blob/v4.7.1/LICENSE.txt -> LICENSE.cutlass-BSD-3-Clause
+vllm-project/flash-attention   BSD-3-Clause   commit 506341a143fcabd4bb79052a7605ada727d6b3f5
+    https://github.com/vllm-project/flash-attention/blob/506341a143fcabd4bb79052a7605ada727d6b3f5/LICENSE -> licenses/LICENSE.flash-attention-BSD-3-Clause
+vllm-project/tml-fa4           BSD-3-Clause   commit 75765e76a9c2c012c1f6ecd64577eb646eb4d303
+    https://github.com/vllm-project/tml-fa4/blob/75765e76a9c2c012c1f6ecd64577eb646eb4d303/LICENSE -> licenses/LICENSE.tml-fa4-BSD-3-Clause
+vllm-project/FlashMLA          MIT            commit 0eee43b12f034b657133cf2afca6a72ebb6efccf
+    https://github.com/vllm-project/FlashMLA/blob/0eee43b12f034b657133cf2afca6a72ebb6efccf/LICENSE -> licenses/LICENSE.FlashMLA-MIT
+vllm-project/DeepGEMM          MIT            commit ad1f1726aa540a76c1d26d6a120effb8de21eaa4
+    https://github.com/vllm-project/DeepGEMM/blob/ad1f1726aa540a76c1d26d6a120effb8de21eaa4/LICENSE -> licenses/LICENSE.DeepGEMM-MIT
+triton-lang/triton             MIT            tag v3.5.1, commit 0add68262ab0a2e33b84524346cb27cbb2787356 (triton_kernels)
+    https://github.com/triton-lang/triton/blob/0add68262ab0a2e33b84524346cb27cbb2787356/LICENSE -> licenses/LICENSE.triton-MIT
+vllm-project/FlashKDA          MIT            commit b59532f1f464fbd536272780e30df5bf6a2ccc02
+    https://github.com/vllm-project/FlashKDA/blob/b59532f1f464fbd536272780e30df5bf6a2ccc02/LICENSE -> licenses/LICENSE.FlashKDA-MIT
+vllm-project/DeepSelect        MIT            commit d96d33afe1fab0d6066da49cdc91e64c2bee65ea
+    https://github.com/vllm-project/DeepSelect/blob/d96d33afe1fab0d6066da49cdc91e64c2bee65ea/LICENSE -> licenses/LICENSE.DeepSelect-MIT
+vllm-project/MSA               MIT            commit f355c37eb4e1413f21ee2ad8bbad25079e6bef9d
+    https://github.com/vllm-project/MSA/blob/f355c37eb4e1413f21ee2ad8bbad25079e6bef9d/LICENSE -> licenses/LICENSE.MSA-MIT
+IST-DASLab/qutlass             Apache-2.0     commit e74319e3405ce6d71965732880f5dc1f52371f64
+    https://github.com/IST-DASLab/qutlass/blob/e74319e3405ce6d71965732880f5dc1f52371f64/LICENSE -> licenses/LICENSE.qutlass-Apache-2.0
 These are the same components upstream vLLM wheels carry; which of them produce code for sm_121a is decided by
 the fork's CMake architecture gates.
 
@@ -43,8 +57,18 @@ FlashInfer 0.6.18.post1   Apache-2.0   flashinfer-python, flashinfer-cubin, flas
 Runtime dependencies resolved from PyPI
 ---------------------------------------
 The fork's requirements/cuda.txt and b12x's pyproject.toml are installed as declared; /opt/llmkube/pip-freeze.txt
-records the exact set. Of note: nvidia-cutlass-dsl 4.7.1 and its -libs packages are distributed by NVIDIA under
-NVIDIA's own license (PyPI classifier "Other/Proprietary License"), as the base image's 4.6.2 already is.
+records the exact set. build/deps_gate.py fails the build if any installed distribution declares an AGPL license.
+
+NVIDIA-proprietary components
+-----------------------------
+This image is not all Apache-2.0/BSD/MIT. It includes, under NVIDIA's own license terms and not under Apache-2.0:
+  nvidia-cutlass-dsl 4.7.1 and nvidia-cutlass-dsl-libs-{base,core,cu12,cu13} 4.7.1 (PyPI classifier
+      "Other/Proprietary License"; https://docs.nvidia.com/cutlass/latest/media/docs/pythonDSL/license.html),
+      required by both the vLLM fork and b12x; the pinned base already ships nvidia-cutlass-dsl 4.6.2;
+  the CUDA runtime and toolkit components of the base image (NVIDIA CUDA EULA) and the nvidia-* CUDA library
+      wheels torch depends on.
+These are redistributed as the upstream vllm/vllm-openai base redistributes them. The OCI licenses label reads
+"Apache-2.0 AND BSD-3-Clause AND MIT AND LicenseRef-NVIDIA-Proprietary".
 
 Base image
 ----------

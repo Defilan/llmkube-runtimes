@@ -88,12 +88,34 @@ build NCCL. The fork's CUDA path requires NCCL >= 2.29.7 (`vllm/distributed/devi
 `ncclCommSuspend`/`ncclCommResume`), which torch 2.13.0's own pin (`nvidia-nccl-cu13==2.29.7`) meets; newer
 properties (2.31) are optional. The shipped version is in `/opt/llmkube/pip-freeze.txt`.
 
+## Publishing and licensing
+
+CI builds and gates on every PR, push and manual dispatch, but pushes `candidate-<sha>` and attests provenance only
+from `refs/heads/main` and release tags (`cuda-gb10-vllm-dsv41-b12x-v*`). A `workflow_dispatch` on any other branch
+builds and gates without pushing.
+
+The image is not all Apache-2.0/BSD/MIT: besides the Apache-2.0, BSD-3-Clause and MIT components (texts in the
+top-level `LICENSE.*` files and in `licenses/`, one per component the fork's CMake compiles into `vllm/_C`, at the
+revision it pins), it carries NVIDIA-proprietary Python packages (`nvidia-cutlass-dsl` 4.7.1 and its libs, which
+the fork and b12x require and the base already ships at 4.6.2) and the base's CUDA runtime, under NVIDIA's licenses.
+NOTICE says so, and the OCI label is `Apache-2.0 AND BSD-3-Clause AND MIT AND LicenseRef-NVIDIA-Proprietary`.
+
 ## What the build checks
+
+- The compile stage adds CUDA 13.0 Update 3 `-dev` packages (cusparse, cusolver, cufft, culibos, nvtx,
+  profiler-api) pinned by version from NVIDIA's ubuntu2404/sbsa repo. The base is a runtime image and torch's
+  `ATen/cuda/CUDAContextLight.h` includes `cusparse.h` and `cusolverDn.h`. That stage is not shipped.
+- `build/deps_gate.py`: `pip check` conflicts fail the build when either side is vllm, b12x or a
+  `PINNED_DISTS.txt` package, unless a commented regex in `patches/PIP_CHECK_ALLOW.txt` (empty today) accepts it.
+  Other inherited conflicts are printed. It also scans every installed distribution's License,
+  License-Expression and classifiers for AGPL/Affero.
 
 - `build/pins_gate.py`: `/src/vllm` and `/src/b12x` are clean checkouts at the pinned commits of the pinned repos;
   every tracked `vllm/**/*.py` and `b12x/**/*.py` is byte-identical in dist-packages; one vllm is installed and its
   version carries the fork commit; each `PINNED_DISTS.txt` package is installed exactly once at its version; the
-  vLLM install record matches the wheel ARGs; vendored files match `MD5SUMS.txt` (none today). `tests/test_pins.py`
+  vLLM install record matches the wheel ARGs; vendored files match `MD5SUMS.txt` (none today). Both pin files
+  must name vllm and b12x (commits) and torch, flashinfer-python and b12x (versions), so an emptied file fails,
+  and origins must be exactly the pinned GitHub repo. `tests/test_pins.py`
   breaks one pin at a time against real git fixtures.
 - `tests/test_imports_in_image.py`: the V4.1 import line, pinned versions, b12x's `vllm.general_plugins` entries
   (including upstream launcher's `b12x_loader` check), `sm_121` in `vllm/_C`, and the fork's
