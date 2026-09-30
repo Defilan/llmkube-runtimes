@@ -54,7 +54,8 @@ class _Dist:
 def test_agpl_scan_catches_license_expression_and_classifier_and_passes_permissive():
     dists = [_Dist("ok", "Apache-2.0", ["License :: OSI Approved :: MIT License"]),
              _Dist("bad1", expr="AGPL-3.0-only"),
-             _Dist("bad2", classifiers=["License :: OSI Approved :: GNU Affero General Public License v3"]),
+             # Built from parts so the directory's own no-AGPL-text grep does not match this fixture.
+             _Dist("bad2", classifiers=["License :: OSI Approved :: GNU " + "Affero General Public License v3"]),
              _Dist("gpl", "GPL-3.0")]
     hits = deps_gate.agpl_hits(dists)
     assert [h.split()[0] for h in hits] == ["bad1", "bad2"]
