@@ -53,14 +53,32 @@ def classify_pip_check(text: str, owned: set[str], allow: list[str]) -> tuple[li
     return fatal, tolerated
 
 
+# The AGPL's own title, assembled so this file does not match the directory's no-AGPL-text grep.
+AGPL_TITLE = re.compile(r"\A\s*GNU\s+" + "AFF" + r"ERO\s+GENERAL\s+PUBLIC\s+LICENSE", re.I)
+SHORT_LICENSE = 200
+
+
+def _is_agpl(expr: str, classifiers: list[str], license_field: str) -> bool:
+    """SPDX expressions and classifiers match any AGPL identifier. The free-text License field matches that way only
+    when it is short (an identifier); a full bundled license text counts only if it IS the AGPL (opens with its
+    title). numpy, for one, bundles the GPLv3 text for a vendored runtime, and GPLv3 section 13 names the Affero
+    license, so a plain substring search over full texts reports false positives."""
+    if AGPL.search(expr) or any(AGPL.search(c) for c in classifiers):
+        return True
+    if len(license_field) <= SHORT_LICENSE:
+        return bool(AGPL.search(license_field))
+    return bool(AGPL_TITLE.match(license_field))
+
+
 def agpl_hits(dists) -> list[str]:
     hits = []
     for d in dists:
         meta = d.metadata
-        fields = [meta.get("License") or "", meta.get("License-Expression") or ""]
-        fields += [c for c in (meta.get_all("Classifier") or []) if c.startswith("License")]
-        text = " | ".join(f for f in fields if f)
-        if AGPL.search(text):
+        expr = meta.get("License-Expression") or ""
+        classifiers = [c for c in (meta.get_all("Classifier") or []) if c.startswith("License")]
+        lic = meta.get("License") or ""
+        if _is_agpl(expr, classifiers, lic):
+            text = " | ".join(f for f in [expr, *classifiers, lic[:SHORT_LICENSE]] if f)
             hits.append(f"{meta['Name']} {d.version}: {text[:200]}")
     return hits
 

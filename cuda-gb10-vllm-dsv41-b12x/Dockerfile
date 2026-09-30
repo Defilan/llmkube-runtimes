@@ -85,7 +85,14 @@ else
     libcusparse-dev-13-0=12.6.3.3-1 libcusolver-dev-13-0=12.0.4.66-1 libcufft-dev-13-0=12.0.0.61-1 \
     cuda-culibos-dev-13-0=13.0.85-1 cuda-nvtx-13-0=13.0.85-1 cuda-profiler-api-13-0=13.0.85-1 \
     "cuda-nvrtc-dev-13-0=${nvrtc_ver}"
+  # DeepGEMM's DeepJIT includes <elfutils/libdwfl.h> (third-party/deep_jit/include/deep_jit/utils/exception.hpp) and
+  # dlopen()s libdw.so.1 at runtime only for stack traces, so the build needs the headers and the runtime needs
+  # nothing. Ubuntu drops superseded versions from noble-updates, so a version pin here would break the build on the
+  # next security update; this stage is not shipped, and the installed version is printed for the build log.
+  apt-get install -y -q --no-install-recommends libdw-dev
+  dpkg-query -W -f='libdw-dev ${Version}\n' libdw-dev
   rm -rf /var/lib/apt/lists/*
+  test -f /usr/include/elfutils/libdwfl.h || { echo "elfutils/libdwfl.h missing after libdw-dev" >&2; exit 1; }
   test -f /usr/local/cuda/include/cusparse.h && test -f /usr/local/cuda/include/cusolverDn.h
   ls /usr/local/cuda/lib64/libnvrtc.so /usr/local/cuda/targets/sbsa-linux/lib/libnvrtc.so 2>/dev/null | grep -q . \
     || { echo "libnvrtc.so (unversioned) still missing after cuda-nvrtc-dev-13-0=${nvrtc_ver}" >&2; exit 1; }

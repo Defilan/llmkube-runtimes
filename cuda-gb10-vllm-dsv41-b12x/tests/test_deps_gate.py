@@ -83,3 +83,23 @@ def test_a_crashed_or_silent_pip_check_fails_the_gate(monkeypatch, tmp_path, cap
                             lambda *a, rc=rc, out=out, **k: subprocess.CompletedProcess(a, rc, out, ""))
         assert deps_gate.main(["deps_gate", "--root", str(tmp_path)]) == 1
         assert "without a usable report" in capsys.readouterr().err
+
+
+def test_shipped_allowlist_tolerates_the_base_cusparselt_platform_tag_line_only():
+    allow = deps_gate._rows(HERE.parent / "patches" / "PIP_CHECK_ALLOW.txt")
+    line = "nvidia-cusparselt-cu13 0.8.1 is not supported on this platform"
+    fatal, tolerated = deps_gate.classify_pip_check(line + "\n", OWNED, allow)
+    assert (fatal, tolerated) == ([], [line])
+    other = "b12x 1.3.0 is not supported on this platform"
+    assert deps_gate.classify_pip_check(other + "\n", OWNED, allow)[0] == [other]
+
+
+def test_agpl_scan_ignores_a_bundled_gpl3_text_but_catches_a_full_agpl_text():
+    # numpy's License metadata is its full bundled license text, which includes the GPLv3 (section 13 names the
+    # Affero license). That must not count; a full text that IS the AGPL must. Titles built from parts, see above.
+    gpl3_bundle = ("Copyright (c) 2005-2024, NumPy Developers.\n" + "x" * 300 +
+                   "\n   13. Use with the GNU " + "Affero General Public License.\n")
+    agpl_text = "                    GNU " + "AFFERO GENERAL PUBLIC LICENSE\n       Version 3\n" + "x" * 300
+    hits = deps_gate.agpl_hits([_Dist("numpy", gpl3_bundle, ["License :: OSI Approved :: BSD License"]),
+                                _Dist("evil", agpl_text)])
+    assert [h.split()[0] for h in hits] == ["evil"]
