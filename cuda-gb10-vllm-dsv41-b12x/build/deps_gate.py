@@ -70,6 +70,11 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--root", default="/opt/llmkube", type=Path)
     a = ap.parse_args(argv[1:])
     r = subprocess.run([sys.executable, "-m", "pip", "check"], capture_output=True, text=True)
+    if r.returncode not in (0, 1) or (r.returncode == 1 and not (r.stdout + r.stderr).strip()):
+        # 0 = clean, 1 = conflicts listed. Anything else (a crash, a kill), or a failure with no output,
+        # must not read as "no conflicts".
+        print(f"DEPS: pip check exited {r.returncode} without a usable report", file=sys.stderr)
+        return 1
     fatal, tolerated = classify_pip_check(r.stdout + r.stderr, owned_names(a.root),
                                           _rows(a.root / "patches" / "PIP_CHECK_ALLOW.txt"))
     for line in tolerated:
