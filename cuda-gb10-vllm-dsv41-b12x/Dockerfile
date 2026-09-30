@@ -57,7 +57,7 @@ EOT
 # Compile parallelism: the workflow derives MAX_JOBS from the runner's RAM; 2 is upstream's own default
 # (docker/versions.json) and fits 16 GB. NVCC_THREADS parallelises across gencode targets and this builds exactly
 # one (12.1a), so more threads only add memory.
-# CUDA dev headers: the base is a runtime image (nvcc, cudart, nvrtc-dev, curand-dev, cublas-dev only; the fork's own
+# CUDA dev headers: the base is a runtime image (nvcc, cudart, curand-dev, cublas-dev; no unversioned libnvrtc.so; the fork's own
 # image compiles in a full-toolkit builder). torch's ATen/cuda/CUDAContextLight.h includes <cusparse.h> and
 # <cusolverDn.h>, which the fork's csrc pulls in via ATen/cuda/CUDAContext.h. The compile path installs the minimal
 # -dev set, pinned to CUDA 13.0 Update 3 in NVIDIA's ubuntu2404/sbsa repo, in this stage only (not shipped).
@@ -76,12 +76,19 @@ if [ -n "${VLLM_WHEEL_URL}" ]; then
   mode=wheel; origin="${VLLM_WHEEL_URL}"
 else
   /usr/local/cuda/bin/nvcc --version | grep -q 'release 13\.0,' || { echo "base CUDA is not 13.0; re-pin the -dev set" >&2; exit 1; }
+  # nvrtc-dev must match the base's nvrtc runtime exactly (the -dev package depends on that version), so its
+  # pin is read from dpkg rather than hard-coded. CMake's CUDA::nvrtc needs the unversioned libnvrtc.so that only
+  # the -dev package ships; without it configure fails with CUDA_nvrtc_LIBRARY NOTFOUND (first CI run, 2026-09-30).
+  nvrtc_ver="$(dpkg-query -W -f='${Version}' cuda-nvrtc-13-0)"
   apt-get update -q
   apt-get install -y -q --no-install-recommends --allow-change-held-packages \
     libcusparse-dev-13-0=12.6.3.3-1 libcusolver-dev-13-0=12.0.4.66-1 libcufft-dev-13-0=12.0.0.61-1 \
-    cuda-culibos-dev-13-0=13.0.85-1 cuda-nvtx-13-0=13.0.85-1 cuda-profiler-api-13-0=13.0.85-1
+    cuda-culibos-dev-13-0=13.0.85-1 cuda-nvtx-13-0=13.0.85-1 cuda-profiler-api-13-0=13.0.85-1 \
+    "cuda-nvrtc-dev-13-0=${nvrtc_ver}"
   rm -rf /var/lib/apt/lists/*
   test -f /usr/local/cuda/include/cusparse.h && test -f /usr/local/cuda/include/cusolverDn.h
+  ls /usr/local/cuda/lib64/libnvrtc.so /usr/local/cuda/targets/sbsa-linux/lib/libnvrtc.so 2>/dev/null | grep -q . \
+    || { echo "libnvrtc.so (unversioned) still missing after cuda-nvrtc-dev-13-0=${nvrtc_ver}" >&2; exit 1; }
   cd /src/vllm
   python3 use_existing_torch.py --prefix
   pip list --format=freeze | grep -iE '^(torch|torchvision|torchaudio|triton)==' > /tmp/keep.txt
