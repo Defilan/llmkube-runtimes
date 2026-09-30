@@ -90,8 +90,12 @@ jobs:
           pin="$(sed -n 's/^ARG GUFO_SHA=\([0-9a-f]\{40\}\)$/\1/p' Dockerfile)"
           [ -n "$pin" ] || { echo "FAIL: ARG GUFO_SHA is not a full 40-hex commit."; fail=1; }
           grep -q "$pin" NOTICE || { echo "FAIL: NOTICE does not name the pinned commit ${pin}."; fail=1; }
-          if grep -rl 'GNU AFFERO GENERAL PUBLIC LICENSE' . | grep -q .; then
-            echo "FAIL: AGPL text found in rocm-gufo/."; fail=1
+          agpl_rc=0
+          grep -rl 'GNU AFFERO GENERAL PUBLIC LICENSE' . > /tmp/agpl.txt || agpl_rc=$?
+          if [ "$agpl_rc" -eq 0 ]; then
+            echo "FAIL: AGPL text found in rocm-gufo/:"; cat /tmp/agpl.txt; fail=1
+          elif [ "$agpl_rc" -ne 1 ]; then
+            echo "FAIL: the AGPL scan errored (grep exit $agpl_rc)."; fail=1
           fi
           exit $fail
 
@@ -166,7 +170,7 @@ jobs:
       # runner touched a GPU, so it proves nothing about gfx1151 kernels, MTP
       # acceptance or speed. Those are measured on shadowstrix. ---
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
@@ -174,7 +178,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push candidate
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         run: |
           CAND="${IMAGE}:candidate-${GITHUB_SHA}"
           docker tag "${LOCAL}" "${CAND}"
@@ -184,7 +188,7 @@ jobs:
           echo "Pushed ${CAND} (${DIGEST})"
 
       - name: Attest build provenance
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-name: ${{ env.IMAGE }}

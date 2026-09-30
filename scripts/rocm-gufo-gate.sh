@@ -138,8 +138,13 @@ if ! run sh -c '
       # GPL-3.0 text (third-party/ffmpeg-GPL-3.0.txt), whose section 13 reads
       # "Use with the GNU Affero General Public License", so a
       # case-insensitive "GNU AFFERO" grep fails on a clean image.
-      if grep -rl "GNU AFFERO GENERAL PUBLIC LICENSE" /opt/llmkube /usr/local/share/licenses/gufo > /tmp/agpl.txt 2>/dev/null; then
+      # grep exits 0 on a match, 1 on none, 2 on an error (a missing directory, unreadable file); only 1 is clean.
+      agpl_rc=0
+      grep -rl "GNU AFFERO GENERAL PUBLIC LICENSE" /opt/llmkube /usr/local/share/licenses/gufo > /tmp/agpl.txt || agpl_rc=$?
+      if [ "$agpl_rc" -eq 0 ]; then
         echo "FAIL: AGPL text found:"; cat /tmp/agpl.txt; rc=1
+      elif [ "$agpl_rc" -ne 1 ]; then
+        echo "FAIL: the AGPL scan could not read its directories (grep exit $agpl_rc)"; rc=1
       fi
       # A library with no owning package has no /usr/share/doc copyright file
       # we can point to. Loud, but a receipt-format surprise should not fail a
