@@ -1,0 +1,99 @@
+NOTICE for llmkube-gufo-rocm-gfx1151
+====================================
+
+This runtime image is Apache-2.0 (the llmkube-runtimes repository license) and
+redistributes a binary built from MIT-licensed Gufo source. Attribution below
+is a condition of those licenses, not a courtesy.
+
+Nothing here is vendored source: the image compiles Gufo from its upstream
+repository at the commit below and adds no patches.
+
+
+Gufo
+----
+
+    Gufo
+    https://github.com/gufo-org/gufo
+    tag v0.3.0, commit fd1710b5fd090880722e0681a868df2006595c73
+    Copyright (c) 2026 gufo contributors
+    MIT License, reproduced in LICENSE.gufo-MIT
+
+    Gufo's own inventory of adapted and linked code is THIRD_PARTY_NOTICES.md,
+    copied byte-for-byte from the commit above (the build fails if it drifts).
+    Adapted code it names: llama.cpp / ggml (MIT), antirez/ds4 and the
+    DS4 GB10/GX10 fork (MIT), h3.c (MIT) with ccv ancestry (BSD-3-Clause),
+    Composable Kernel arithmetic (MIT), and Qwen reference chat templates
+    (Apache-2.0).
+
+    Gufo's CMake install places its LICENSE, NOTICE, THIRD_PARTY_NOTICES.md and
+    every upstream license text it retains under
+        /usr/local/share/licenses/gufo/
+        /usr/local/share/licenses/gufo/third-party/
+    in the image. This NOTICE, LICENSE.gufo-MIT and THIRD_PARTY_NOTICES.md are
+    also at /opt/llmkube/. The pinned commit is recorded at
+    /opt/llmkube/gufo-commit and in the io.llmkube.gufo.sha image label.
+
+
+What this image redistributes beside Gufo
+-----------------------------------------
+
+Gufo's THIRD_PARTY_NOTICES.md says non-Nix builds "must retain the notices of
+the versions they actually distribute". The versions here are not the Nix
+versions that file lists:
+
+    ROCm 7.2.3 runtime        hip-runtime-amd, hipblas, hipblaslt, rocblas and
+                              their dependencies, from AMD's apt repository
+                              https://repo.radeon.com/rocm/apt/7.2.3 (MIT,
+                              BSD-3-Clause; same ROCm release Gufo qualifies).
+                              hipCUB, rocPRIM and rocWMMA are headers compiled
+                              into the kernels; their texts are in Gufo's
+                              third-party/ directory.
+    ICU, libcurl, OpenSSL,    Ubuntu 24.04 (noble) archive packages. Each
+    libpng, libjpeg-turbo,    package's copyright file is kept under
+    GNU C/C++/OpenMP runtime  /usr/share/doc/<package>/copyright.
+
+/opt/llmkube/linked-libs.txt lists every library the binary links with its
+owning package, and /opt/llmkube/runtime-packages.txt every installed package
+and version, both generated at build time.
+
+
+FFmpeg, which this image does NOT contain
+-----------------------------------------
+
+Gufo invokes ffmpeg/ffprobe as separate executables for video and audio
+output. It does not link FFmpeg, and text serving never calls it. This image
+installs no FFmpeg executable, library or package, and the build and CI gate
+both assert that. Gufo's retained FFmpeg license texts
+(third-party/ffmpeg*.txt) ship because Gufo's install rules copy the whole
+licenses/ directory; they describe software that is not present. Media
+endpoints fail in this image by design.
+
+
+Build-time dependencies
+-----------------------
+
+    rocm/dev-ubuntu-24.04:7.2.3   builder, pinned by digest in the Dockerfile
+    ubuntu:24.04                  runtime base, pinned by digest
+
+
+Model artifacts, which this image does NOT contain
+--------------------------------------------------
+
+The image ships no weights. The artifacts it is built to serve carry their own
+terms, and those terms follow the weights rather than this image:
+
+    Qwen3.8-Flash-Next GGUF, UD-Q4_K_XL (four shards)
+      unsloth/Qwen3.8-Flash-Next-GGUF
+      license_name qwen-community-1.0
+      https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF
+
+    MTP draft head
+      MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf, from the same repository.
+      Gufo uses the shared head, unlike vulkan-qwen4exp.
+
+Intended serve command (bake-off; not exercised in CI, which has no GPU):
+
+    gufo serve --host 0.0.0.0 --port 8080 llm \
+      --model <UD-Q4_K_XL shard 1> \
+      --speculative mtp --mtp-model <mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf> \
+      --sessions 2 --context 262144

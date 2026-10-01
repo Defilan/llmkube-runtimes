@@ -1,0 +1,210 @@
+name: build-rocm-gufo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'rocm-gufo/**'
+      - 'scripts/rocm-gufo-gate.sh'
+      - 'scripts/dockerfile-parse-check.py'
+      - '.github/workflows/build-rocm-gufo.yml'
+    tags: ['rocm-gufo-v*']
+  pull_request:
+    paths:
+      - 'rocm-gufo/**'
+      - 'scripts/rocm-gufo-gate.sh'
+      - 'scripts/dockerfile-parse-check.py'
+      - '.github/workflows/build-rocm-gufo.yml'
+  workflow_dispatch: {}
+  # NO schedule. Every input is immutable: Gufo by release tag with its commit
+  # SHA asserted, the ROCm builder and the ubuntu runtime base by digest, and
+  # the ROCm runtime packages from AMD's versioned 7.2.3 apt path. A weekly
+  # rebuild would recompile Gufo's HIP kernels to restate what the pins say.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-rocm-gufo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    # amd64, and a requirement: Gufo's CMakeLists hard-fails on anything but
+    # Linux x86-64, and shadowstrix (the Strix Halo node) is x86-64.
+    runs-on: ubuntu-24.04
+    # NOT YET MEASURED. Gufo compiles every model's HIP kernels (Flash-Next,
+    # DeepSeek V4 Flash, Qwen TTS/ASR/Image, MiniMax H3) for gfx1151 on a
+    # 4-vCPU runner. 350 sits just under the hosted runner's 360-minute job cap
+    # so a compile that cannot fit fails as a timeout with logs, not a kill.
+    timeout-minutes: 350
+    permissions:
+      contents: read
+      packages: write      # push candidate to GHCR (trusted refs only)
+      id-token: write      # keyless provenance attestation
+      attestations: write
+    env:
+      IMAGE: ghcr.io/defilantech/llmkube-gufo-rocm-gfx1151
+      LOCAL: ghcr.io/defilantech/llmkube-gufo-rocm-gfx1151:ci-${{ github.sha }}
+      # Bumping either base means editing both this and the Dockerfile ARG; the
+      # drift check below enforces that.
+      ROCM_DEV_DIGEST: 'sha256:8ab378c7264c7e15496f548392c518a6b2feeb322d6233364c6c2ebc8e7ffb42'
+      UBUNTU_DIGEST: 'sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # The builder pulls the ROCm dev image plus the hipBLASLt and rocBLAS dev
+      # packages (hipblaslt alone is ~4.9 GB installed), and the runtime stage
+      # installs the same libraries again. Same reclaim as build-rocm.yml.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
+                      /usr/share/swift /usr/local/.ghcup || true
+          sudo docker image prune -af || true
+          df -h /
+
+      # HIP compiles of the larger kernel files take several GB each; swap keeps
+      # an unlucky peak from surfacing as a bare "Killed".
+      - name: Add swap headroom
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          sudo fallocate -l 16G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
+      # Attribution is checked before anything expensive runs. The Dockerfile
+      # additionally byte-compares LICENSE.gufo-MIT and THIRD_PARTY_NOTICES.md
+      # against the files at the pinned commit.
+      - name: Verify attribution files
+        run: |
+          cd rocm-gufo
+          fail=0
+          for f in NOTICE LICENSE.gufo-MIT THIRD_PARTY_NOTICES.md; do
+            [ -s "$f" ] || { echo "FAIL: $f missing; MIT requires the notice to travel."; fail=1; }
+          done
+          [ "$(head -1 LICENSE.gufo-MIT)" = "MIT License" ] || { echo "FAIL: LICENSE.gufo-MIT is not the MIT text."; fail=1; }
+          pin="$(sed -n 's/^ARG GUFO_SHA=\([0-9a-f]\{40\}\)$/\1/p' Dockerfile)"
+          [ -n "$pin" ] || { echo "FAIL: ARG GUFO_SHA is not a full 40-hex commit."; fail=1; }
+          grep -q "$pin" NOTICE || { echo "FAIL: NOTICE does not name the pinned commit ${pin}."; fail=1; }
+          agpl_rc=0
+          grep -rl 'GNU AFFERO GENERAL PUBLIC LICENSE' . > /tmp/agpl.txt || agpl_rc=$?
+          if [ "$agpl_rc" -eq 0 ]; then
+            echo "FAIL: AGPL text found in rocm-gufo/:"; cat /tmp/agpl.txt; fail=1
+          elif [ "$agpl_rc" -ne 1 ]; then
+            echo "FAIL: the AGPL scan errored (grep exit $agpl_rc)."; fail=1
+          fi
+          exit $fail
+
+      - name: Verify the base digests match the Dockerfile
+        run: |
+          fail=0
+          for pair in "ROCM_DEV_DIGEST:${ROCM_DEV_DIGEST}" "UBUNTU_DIGEST:${UBUNTU_DIGEST}"; do
+            name="${pair%%:*}"; want="${pair#*:}"
+            got="$(sed -n "s/^ARG ${name}=\(sha256:[0-9a-f]\{64\}\)$/\1/p" rocm-gufo/Dockerfile)"
+            echo "${name}: Dockerfile=${got} workflow=${want}"
+            [ -n "${got}" ] || { echo "FAIL: ARG ${name} is not pinned to a sha256 digest."; fail=1; continue; }
+            [ "${got}" = "${want}" ] || { echo "FAIL: ${name} drift between the workflow and the Dockerfile."; fail=1; }
+          done
+          exit $fail
+
+      # Seconds, and deliberately before the multi-GB pull and the compile.
+      - name: Dockerfile parse check (before the expensive pull)
+        run: python3 scripts/dockerfile-parse-check.py $(git ls-files '*Dockerfile')
+
+      - name: Shell syntax check
+        run: bash -n scripts/rocm-gufo-gate.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      # MAX_JOBS from the runner, capped at Gufo's README value of 4.
+      - name: Choose a build parallelism the runner can survive
+        run: |
+          jobs="$(nproc)"
+          [ "$jobs" -gt 4 ] && jobs=4
+          echo "MAX_JOBS=${jobs}" >> "${GITHUB_ENV}"
+          echo "nproc=$(nproc) MemTotal=$(awk '/MemTotal/{print $2/1024/1024" GiB"}' /proc/meminfo) -> MAX_JOBS=${jobs}"
+
+      # NO cache-from/cache-to. The Actions cache is 10 GB per repo shared
+      # across every workflow here, and this build stage (ROCm dev image plus
+      # the hipBLASLt/rocBLAS dev packages) would dominate it, evicting the
+      # Vulkan, ROCm, CUDA and coder caches. This build is not on the routine
+      # path.
+      - name: Build image (load locally for the gate)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: rocm-gufo
+          target: server
+          load: true
+          tags: ${{ env.LOCAL }}
+          build-args: |
+            MAX_JOBS=${{ env.MAX_JOBS }}
+
+      - name: Disk after build
+        if: always()
+        run: df -h /
+
+      - name: Gufo gate (pin, runs, flags, no FFmpeg, license files)
+        run: ./scripts/rocm-gufo-gate.sh "${{ env.LOCAL }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.LOCAL }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-rocm-gufo-${{ github.sha }}
+          path: sbom.spdx.json
+
+      # --- Trusted refs only. Fork PRs build + gate above, but never reach here:
+      # GITHUB_TOKEN is read-only for them and these steps are gated off
+      # pull_request. The candidate is unsigned-for-trust; nothing on this
+      # runner touched a GPU, so it proves nothing about gfx1151 kernels, MTP
+      # acceptance or speed. Those are measured on shadowstrix. ---
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push candidate
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        run: |
+          CAND="${IMAGE}:candidate-${GITHUB_SHA}"
+          docker tag "${LOCAL}" "${CAND}"
+          docker push "${CAND}"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${CAND}" | cut -d@ -f2)"
+          echo "DIGEST=${DIGEST}" >> "${GITHUB_ENV}"
+          echo "Pushed ${CAND} (${DIGEST})"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          push-to-registry: true
+
+  # Stable required status check. Job id is `build`, matching build.yml and the
+  # other variant workflows, so branch protection's required `build` context is
+  # reported by whichever of them a PR actually triggers.
+  build:
+    needs: [image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the image build passed
+        run: |
+          result="${{ needs.image.result }}"
+          echo "image result: ${result}"
+          test "${result}" = "success"
