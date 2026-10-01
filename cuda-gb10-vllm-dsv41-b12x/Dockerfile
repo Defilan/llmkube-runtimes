@@ -186,10 +186,14 @@ RUN python3 /opt/llmkube/build/pins_gate.py --site "$D" && python3 /opt/llmkube/
 ENV B12X_COMPILE_CACHE_DIR=/opt/llmkube/b12x-cache \
     CUTE_DSL_ARCH=sm_121a \
     TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
-RUN mkdir -p "$B12X_COMPILE_CACHE_DIR" && chmod 1777 "$B12X_COMPILE_CACHE_DIR" && python3 /opt/llmkube/build/prewarm.py
+# No GPU exists during docker build, so vLLM sees 0 active Triton drivers and disables Triton, and the V4.1 kernels
+# that build Triton constants at import time then fail (`tl.constexpr` is None). An EMPTY CUDA_VISIBLE_DEVICES is
+# vLLM's own lenient case for driverless initialisation (vllm/triton_utils/importing.py, `is_distributed_env`):
+# Triton stays enabled with 0 drivers. Set on these RUN lines only, never as ENV, so the image serves normally.
+RUN mkdir -p "$B12X_COMPILE_CACHE_DIR" && chmod 1777 "$B12X_COMPILE_CACHE_DIR" && CUDA_VISIBLE_DEVICES= python3 /opt/llmkube/build/prewarm.py
 
 # ---- 3.6 in-image tests (ours, plus the fork's own TP3 padding test from /src/vllm) ----
-RUN pip install -q pytest==9.1.1 && DSV41_IN_IMAGE=1 python3 -m pytest -q -p no:cacheprovider /opt/llmkube/tests
+RUN pip install -q pytest==9.1.1 && CUDA_VISIBLE_DEVICES= DSV41_IN_IMAGE=1 python3 -m pytest -q -p no:cacheprovider /opt/llmkube/tests
 
 # ---- 3.7 receipts, entrypoint ----
 RUN bash /opt/llmkube/build/receipt.sh
