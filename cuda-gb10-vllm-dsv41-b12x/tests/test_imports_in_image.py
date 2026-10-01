@@ -194,3 +194,26 @@ def test_b12x_native_loader_builds_with_io_uring(monkeypatch, tmp_path):
     target = _native._build()
     # Built with -DB12X_HAVE_LIBURING only when pkg-config found liburing, which also links it in.
     assert "liburing" in subprocess.run(["ldd", str(target)], capture_output=True, text=True).stdout
+
+
+def test_carried_b12x_ring_routing_patch_is_live():
+    # local-inference-lab/b12x#457, carried in patches/b12x until it merges: RoCEnante routes each peer's rails
+    # over the links cabled to it, so the three-Spark ring connects instead of timing out every queue pair.
+    import ipaddress
+    from b12x.comm.roce import _proxy
+    from b12x.comm.roce._routes import Endpoint, plan_routes
+
+    def ep(name, iface):
+        return Endpoint(name, ipaddress.IPv4Interface(iface))
+
+    ring = [
+        [ep("rocep1s0f0", "10.10.0.1/30"), ep("rocep1s0f1", "10.10.4.2/30"),
+         ep("roceP2p1s0f0", "10.10.1.1/30"), ep("roceP2p1s0f1", "10.10.5.2/30")],
+        [ep("rocep1s0f0", "10.10.2.1/30"), ep("rocep1s0f1", "10.10.0.2/30"),
+         ep("roceP2p1s0f0", "10.10.3.1/30"), ep("roceP2p1s0f1", "10.10.1.2/30")],
+        [ep("rocep1s0f0", "10.10.4.1/30"), ep("rocep1s0f1", "10.10.2.2/30"),
+         ep("roceP2p1s0f0", "10.10.5.1/30"), ep("roceP2p1s0f1", "10.10.3.2/30")],
+    ]
+    assert plan_routes(ring, 0, 2)[1] == [(0, 1), (2, 3)]
+    assert plan_routes(ring, 0, 2)[2] == [(1, 0), (3, 2)]
+    assert "ROCE_ABI_VERSION 5" in _proxy._SOURCE.read_text()
