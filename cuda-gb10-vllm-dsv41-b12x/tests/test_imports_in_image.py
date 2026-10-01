@@ -5,6 +5,7 @@ No CUDA kernel is launched; this runs in the docker build and on the driverless 
 """
 from __future__ import annotations
 import glob
+import re
 import importlib
 import importlib.metadata as md
 import os
@@ -66,15 +67,50 @@ def test_v41_padding_hook_is_wired_for_the_model_and_its_drafter():
     assert "update_model_config_for_parallelism" in vars(DeepseekV41ForCausalLMConfig)
 
 
-def test_compiled_extension_carries_sm_121a():
+def gb10_loadable(elf_names):
+    """Splits the SM12x cubins `cuobjdump --list-elf` reports into (loadable on GB10, not loadable).
+
+    GB10 is sm_121. A cubin for a lower minor of the same major runs on it (CUDA binary compatibility), so plain
+    sm_120 and the 12.0f family cubins the fork builds on CUDA 13.0 (CMakeLists.txt: CUDA_SUPPORTED_ARCHS lists
+    12.0, not 12.1; cmake/utils.cmake maps 12.1a onto the 12.0f family) are fine. Architecture-specific "a" cubins
+    run only on their exact chip, so sm_120a would not load on GB10; sm_121a would.
+    """
+    ok, bad = [], []
+    for name in elf_names:
+        m = re.search(r"sm_(12\d)([af]?)", name)
+        if not m:
+            continue
+        arch, suffix = m.group(1), m.group(2)
+        (bad if suffix == "a" and arch != "121" else ok).append(name)
+    return ok, bad
+
+
+def test_gb10_loadable_classifies_cubins():
+    ok, bad = gb10_loadable(["x.1.sm_120.cubin", "x.2.sm_121a.cubin", "x.3.sm_120a.cubin", "x.4.sm_80.cubin",
+                             "x.5.sm_120f.cubin"])
+    assert ok == ["x.1.sm_120.cubin", "x.2.sm_121a.cubin", "x.5.sm_120f.cubin"]
+    assert bad == ["x.3.sm_120a.cubin"]
+
+
+def test_compiled_extensions_load_on_gb10():
     cuobjdump = shutil.which("cuobjdump") or "/usr/local/cuda/bin/cuobjdump"
     if not os.path.exists(cuobjdump):
         pytest.skip("cuobjdump not in this image")
     import vllm
-    so = glob.glob(os.path.join(os.path.dirname(vllm.__file__), "_C*.so"))
-    assert so, "vllm/_C*.so missing: the fork was installed without its compiled extension"
-    out = subprocess.run([cuobjdump, "--list-elf", so[0]], capture_output=True, text=True).stdout
-    assert "sm_121" in out, out[-2000:]
+    sos = sorted(glob.glob(os.path.join(os.path.dirname(vllm.__file__), "_C*.so")))
+    assert sos, "vllm/_C*.so missing: the fork was installed without its compiled extension"
+    for so in sos:
+        out = subprocess.run([cuobjdump, "--list-elf", so], capture_output=True, text=True).stdout
+        names = [line.split(":", 1)[1].strip() for line in out.splitlines() if "ELF file" in line and ":" in line]
+        ok, bad = gb10_loadable(names)
+        assert not bad, f"{os.path.basename(so)} has SM12x cubins GB10 cannot load: {bad[:5]}"
+        if any(re.search(r"sm_12\d", n) for n in names):
+            assert ok, f"{os.path.basename(so)}: no GB10-loadable SM12x cubin"
+    assert any(
+        gb10_loadable([l.split(":", 1)[1].strip() for l in subprocess.run(
+            [cuobjdump, "--list-elf", so], capture_output=True, text=True).stdout.splitlines() if "ELF file" in l])[0]
+        for so in sos
+    ), "no _C*.so carries a GB10-loadable SM12x cubin"
 
 
 def test_fork_tp3_padding_test_passes():
