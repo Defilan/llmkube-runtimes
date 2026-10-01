@@ -181,3 +181,16 @@ def test_nccl_is_2_30_7_with_subnet_aware_routing():
     lib = os.path.join(nvidia.nccl.__path__[0], "lib", "libnccl.so.2")
     with open(lib, "rb") as f:
         assert b"NCCL_IB_SUBNET_AWARE_ROUTING" in f.read()
+
+
+def test_b12x_native_loader_builds_with_io_uring(monkeypatch, tmp_path):
+    # --load-format b12x scatters weights through the loader's io_uring bounce path; without liburing the native
+    # module still builds but loading fails with "io_uring bounce support is unavailable". The build has no driver
+    # libcuda, so link against CUDA's stub, and build into a temporary cache so nothing stub-linked ships.
+    assert subprocess.run(["pkg-config", "--exists", "liburing"]).returncode == 0
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("LIBRARY_PATH", "/usr/local/cuda/lib64/stubs")
+    from b12x.loader import _native
+    target = _native._build()
+    # Built with -DB12X_HAVE_LIBURING only when pkg-config found liburing, which also links it in.
+    assert "liburing" in subprocess.run(["ldd", str(target)], capture_output=True, text=True).stdout

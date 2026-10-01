@@ -123,6 +123,19 @@ ARG VLLM_WHEEL_URL=""
 ARG VLLM_WHEEL_SHA256=""
 ENV D=/usr/local/lib/python3.12/dist-packages
 
+# b12x's checkpoint loader compiles its C extension at first use (b12x/loader/_native.py) and turns on io_uring only
+# when pkg-config finds liburing; --load-format b12x then needs that io_uring bounce path ("io_uring bounce support is
+# unavailable" on the first TP3 smoke run, 2026-10-01). Unpinned for the same reason as libdw-dev above; the installed
+# versions are printed for the build log, and the in-image tests compile the loader and check liburing is found.
+RUN <<EOT
+set -eu
+apt-get update -q
+apt-get install -y -q --no-install-recommends liburing-dev pkg-config
+dpkg-query -W -f='${Package} ${Version}\n' liburing-dev pkg-config
+rm -rf /var/lib/apt/lists/*
+pkg-config --exists liburing || { echo "pkg-config cannot find liburing" >&2; exit 1; }
+EOT
+
 COPY patches /opt/llmkube/patches
 COPY build /opt/llmkube/build
 COPY tests /opt/llmkube/tests
