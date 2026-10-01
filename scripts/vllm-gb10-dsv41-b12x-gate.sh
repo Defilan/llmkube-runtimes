@@ -23,7 +23,7 @@ for f in LICENSE.FlashMLA-MIT LICENSE.DeepGEMM-MIT LICENSE.triton-MIT LICENSE.Fl
   run bash -c "grep -q 'Permission is hereby granted' /opt/llmkube/licenses/$f"
 done
 run bash -c "grep -q 'Apache License' /opt/llmkube/licenses/LICENSE.qutlass-Apache-2.0"
-run bash -c '! grep -rli "GNU AFFERO" /opt/llmkube/patches /opt/llmkube/build /opt/llmkube/tests'
+run bash -c '! grep -rli --exclude-dir=__pycache__ "GNU AFFERO" /opt/llmkube/patches /opt/llmkube/build /opt/llmkube/tests'
 run bash -c '! grep -rli --exclude-dir=.git "GNU AFFERO" /src/vllm /src/b12x'
 run python3 /opt/llmkube/build/deps_gate.py
 echo "PASS: receipt, stamp, freeze, NOTICE, the four top-level and nine compiled-in license texts present; no AGPL text in the image's own material, either source tree, or any installed distribution's license metadata; no pip check conflict on a pinned package"

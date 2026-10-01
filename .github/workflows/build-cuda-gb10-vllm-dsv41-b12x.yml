@@ -82,7 +82,7 @@ jobs:
             grep -q 'Apache License' "$f" || { echo "FAIL: $f is not the Apache text."; fail=1; }
           done
           grep -q 'Redistribution and use in source and binary forms' LICENSE.cutlass-BSD-3-Clause || { echo "FAIL: LICENSE.cutlass-BSD-3-Clause is not the BSD-3-Clause text."; fail=1; }
-          if grep -rli 'GNU AFFERO' patches build tests 2>/dev/null | grep -q .; then
+          if grep -rli --exclude-dir=__pycache__ 'GNU AFFERO' patches build tests 2>/dev/null | grep -q .; then
             echo "FAIL: AGPL text found in this directory's material."; fail=1
           fi
           python3 -m venv /tmp/pyt && /tmp/pyt/bin/pip install -q pytest
