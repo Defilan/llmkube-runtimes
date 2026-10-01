@@ -42,5 +42,5 @@ run bash -c 'DSV41_VERIFY_TREE=1 /usr/local/bin/dsv41-entrypoint.sh true'
 echo "PASS: entrypoint verifies the vllm+b12x tree digest"
 
 echo "== in-image test suites (includes the fork's TP3 padding test from /src/vllm) =="
-run bash -c 'DSV41_IN_IMAGE=1 python3 -m pytest -q -p no:cacheprovider /opt/llmkube/tests'
+run bash -c 'CUDA_VISIBLE_DEVICES= PYTHONDONTWRITEBYTECODE=1 DSV41_IN_IMAGE=1 python3 -m pytest -q -p no:cacheprovider /opt/llmkube/tests'
 echo "PASS: Tier-1 gate complete for ${IMAGE}"
