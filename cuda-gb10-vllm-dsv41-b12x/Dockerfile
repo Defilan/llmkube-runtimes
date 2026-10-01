@@ -172,6 +172,24 @@ EOT
 # ---- 3.3 b12x at its pinned commit, with its dependency pins (cutlass-dsl 4.7.1 and libs, apache-tvm-ffi <0.2) ----
 RUN pip install -q -c /opt/llmkube/constraints.txt /src/b12x && git -C /src/b12x clean -fdxq && rm -rf /root/.cache/pip
 
+# ---- 3.3b NCCL 2.30.7 back in place of torch's 2.29.7 pin ----
+# The base ships NCCL 2.30.7 even though torch 2.13.0+cu130 declares ==2.29.7; installing the fork's wheel lets pip
+# "repair" that and downgrade to 2.29.7. The three-Spark ring needs 2.30.7: its NCCL_IB_SUBNET_AWARE_ROUTING picks
+# the right NIC per peer on the odd-cycle P0->P1 cabling, and without it every channel's QP times out at INIT->RTR
+# (observed on the first TP3 smoke run, 2026-10-01). Hash-checked, --no-deps, same wheel the base ships.
+ARG NCCL_WHEEL_SHA256=ca786ffa5a647c75d4d1f5cc72a6c4f537947e2ba8823d7c8aaf768e7a7b9f77
+ARG NCCL_WHEEL_URL=https://files.pythonhosted.org/packages/d1/21/a73174c6157101bdf1ffc22b517f76ff0082613989dd9bc8f43e8034caac/nvidia_nccl_cu13-2.30.7-py3-none-manylinux_2_18_aarch64.whl
+RUN <<EOT
+set -eu
+mkdir -p /tmp/nccl
+curl -fsSL -m 1800 -o "/tmp/nccl/$(basename "$NCCL_WHEEL_URL")" "$NCCL_WHEEL_URL"
+echo "$NCCL_WHEEL_SHA256  /tmp/nccl/$(basename "$NCCL_WHEEL_URL")" | sha256sum -c -
+pip install -q --no-deps --force-reinstall /tmp/nccl/*.whl
+lib="$(python3 -c 'import nvidia.nccl, os; print(os.path.join(nvidia.nccl.__path__[0], "lib", "libnccl.so.2"))')"
+grep -aq NCCL_IB_SUBNET_AWARE_ROUTING "$lib" || { echo "NCCL at $lib has no subnet-aware routing" >&2; exit 1; }
+rm -rf /tmp/nccl /root/.cache/pip
+EOT
+
 # ---- 3.4 pins gate (checkouts, installed trees, dist versions, install record; build ARGs are in the env here) and
 # deps gate (pip check conflicts touching a pinned package, AGPL in any installed distribution's license metadata) ----
 RUN python3 /opt/llmkube/build/pins_gate.py --site "$D" && python3 /opt/llmkube/build/deps_gate.py

@@ -172,3 +172,12 @@ def test_attribution_for_everything_compiled_into_vllm_C_travels():
     for top in ("NOTICE", "LICENSE.vllm-Apache-2.0", "LICENSE.b12x-Apache-2.0", "LICENSE.flashinfer-Apache-2.0",
                 "LICENSE.cutlass-BSD-3-Clause"):
         assert (Path("/opt/llmkube") / top).is_file(), top
+
+
+def test_nccl_is_2_30_7_with_subnet_aware_routing():
+    # The three-Spark ring's odd-cycle cabling needs NCCL_IB_SUBNET_AWARE_ROUTING (2.30+); 2.29.7 times out every QP.
+    import nvidia.nccl
+    assert md.version("nvidia-nccl-cu13") == "2.30.7"
+    lib = os.path.join(nvidia.nccl.__path__[0], "lib", "libnccl.so.2")
+    with open(lib, "rb") as f:
+        assert b"NCCL_IB_SUBNET_AWARE_ROUTING" in f.read()

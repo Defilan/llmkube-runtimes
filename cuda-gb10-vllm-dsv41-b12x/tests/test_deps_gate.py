@@ -103,3 +103,12 @@ def test_agpl_scan_ignores_a_bundled_gpl3_text_but_catches_a_full_agpl_text():
     hits = deps_gate.agpl_hits([_Dist("numpy", gpl3_bundle, ["License :: OSI Approved :: BSD License"]),
                                 _Dist("evil", agpl_text)])
     assert [h.split()[0] for h in hits] == ["evil"]
+
+
+def test_shipped_allowlist_tolerates_torchs_nccl_pin_only_at_2_30_7():
+    allow = deps_gate._rows(HERE.parent / "patches" / "PIP_CHECK_ALLOW.txt")
+    line = ('torch 2.13.0+cu130 has requirement nvidia-nccl-cu13==2.29.7; platform_system == "Linux", '
+            'but you have nvidia-nccl-cu13 2.30.7.')
+    assert deps_gate.classify_pip_check(line + "\n", OWNED, allow) == ([], [line])
+    other = line.replace("2.30.7", "2.28.3")
+    assert deps_gate.classify_pip_check(other + "\n", OWNED, allow)[0] == [other]
