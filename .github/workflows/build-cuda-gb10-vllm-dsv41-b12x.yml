@@ -153,6 +153,15 @@ jobs:
       - name: Tier-1 gate (pins; fork vLLM + b12x; TP3 padding; in-image tests)
         run: ./scripts/vllm-gb10-dsv41-b12x-gate.sh "${{ env.LOCAL }}"
 
+      # syft saves the loaded image as a tar under /tmp before scanning it. This image is ~47 GB uncompressed (the
+      # vLLM base alone is ~21 GB) and the runner has ~33 GB left after a full compile, so drop the build cache first:
+      # the gate has already run on the loaded image, which this does not touch.
+      - name: Free the build cache for the SBOM scan
+        run: |
+          docker buildx prune -af >/dev/null || true
+          docker builder prune -af >/dev/null || true
+          df -h /
+
       - name: Generate SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
