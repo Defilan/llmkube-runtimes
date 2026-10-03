@@ -257,3 +257,96 @@ def test_pinned_wheels_are_hashed_https_urls():
         assert url.startswith("https://") and url.endswith(".whl"), dist
         assert version.split("+")[0] in url, (dist, version, url)
     assert all(len(r) in (2, 4) for r in rows), rows
+
+
+# ---- carried upstream patches (patches/<name>/*.patch + APPLIED.md) ----
+
+PATCH_NEW = "b12x/attention/routes.py"
+PATCH_BODY = "ROUTES = 'switchless ring routes'\n"
+
+
+def _carry_patch(image, *, apply_extra: str | None = None, record_sha: str | None = None,
+                 marker: str = "switchless ring routes") -> Path:
+    """Make a patch on a scratch copy of the b12x checkout, record it, apply it to the real checkout and install."""
+    co = image["src"] / "b12x"
+    scratch = co.parent / "b12x-scratch"
+    shutil.copytree(co, scratch)
+    (scratch / "b12x" / "attention" / "mla.py").write_text("K = 3\n")
+    (scratch / PATCH_NEW).write_text(PATCH_BODY)
+    _git(scratch, "add", "-A")
+    patch = _git(scratch, "diff", "--cached", "--binary") + "\n"
+    shutil.rmtree(scratch)
+    pdir = image["root"] / "patches" / "b12x"
+    pdir.mkdir(parents=True, exist_ok=True)
+    p = pdir / "0001-routes.patch"
+    p.write_text(patch)
+    sha = record_sha or hashlib.sha256(p.read_bytes()).hexdigest()
+    (pdir / "APPLIED.md").write_text(
+        "| File | Upstream | Head SHA | Author | Scope | Form | Marker | sha256 |\n"
+        "|------|----------|----------|--------|-------|------|--------|--------|\n"
+        f"| 0001-routes.patch | local-inference-lab/b12x#1 | {'c' * 40} | t | comm | exact PR diff | {marker} | {sha} |\n")
+    # The Dockerfile's sequence: apply, then `git add -N` the patch's new files (git 2.43's apply --intent-to-add
+    # drops the rest of the index).
+    _git(co, "apply", str(p))
+    for line in _git(co, "apply", "--summary", str(p)).splitlines():
+        if line.strip().startswith("create mode "):
+            _git(co, "add", "-N", "--", line.split()[-1])
+    if apply_extra:
+        (co / apply_extra).write_text("drift\n")
+    for rel in ("b12x/attention/mla.py", PATCH_NEW):
+        (image["site"] / rel).write_text((co / rel).read_text())
+    return p
+
+
+def test_carried_patch_recorded_and_applied_passes(image):
+    _carry_patch(image)
+    r = run_gate(image)
+    assert r.returncode == 0, r.stderr
+
+
+def test_carried_patch_survives_git_clean(image):
+    # The image runs `git clean -fdxq` after installing; `git add -N` keeps the patch's new file.
+    _carry_patch(image)
+    _git(image["src"] / "b12x", "clean", "-fdxq")
+    r = run_gate(image)
+    assert r.returncode == 0, r.stderr
+
+
+def test_change_beyond_the_carried_patch_fails(image):
+    _carry_patch(image, apply_extra="b12x/__init__.py")
+    r = run_gate(image)
+    assert r.returncode == 1 and "b12x/__init__.py" in r.stderr
+
+
+def test_carried_patch_with_wrong_recorded_sha_fails(image):
+    _carry_patch(image, record_sha="d" * 64)
+    r = run_gate(image)
+    assert r.returncode == 1 and "0001-routes.patch" in r.stderr and "sha256" in r.stderr
+
+
+def test_carried_patch_without_an_applied_row_fails(image):
+    p = _carry_patch(image)
+    (p.parent / "APPLIED.md").write_text("| File | Upstream | Head SHA | Author | Scope | Form | Marker | sha256 |\n")
+    r = run_gate(image)
+    assert r.returncode == 1 and "0001-routes.patch" in r.stderr
+
+
+def test_installed_new_file_from_a_carried_patch_must_match(image):
+    _carry_patch(image)
+    (image["site"] / PATCH_NEW).write_text("ROUTES = 'stale'\n")
+    r = run_gate(image)
+    assert r.returncode == 1 and PATCH_NEW in r.stderr
+
+
+def test_carried_patch_marker_must_be_installed(image):
+    _carry_patch(image, marker="not in any installed file")
+    r = run_gate(image)
+    assert r.returncode == 1 and "marker" in r.stderr
+
+
+def test_recorded_but_unapplied_patch_fails(image):
+    p = _carry_patch(image)
+    _git(image["src"] / "b12x", "apply", "-R", str(p))
+    _git(image["src"] / "b12x", "reset", "-q")
+    r = run_gate(image)
+    assert r.returncode == 1 and "0001-routes.patch" in r.stderr

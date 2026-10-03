@@ -15,6 +15,7 @@
 #   base        vllm/vllm-openai deepseekv41-flash-0909-arm64, by digest   Apache-2.0   torch 2.13.0+cu130, CUDA 13.0
 #   vLLM fork   local-inference-lab/vllm ec49d578                          Apache-2.0   compiled here for sm_121a
 #   b12x        local-inference-lab/b12x 0d6600e6 (1.3.0)                  Apache-2.0   pure Python, kernels JIT at serve
+#               + local-inference-lab/b12x#457 (switchless-ring RoCE routing), carried until it merges
 #   FlashInfer  0.6.18.post1 wheels by sha256 (the fork's pin)             Apache-2.0   replaces the base's 0.6.18
 #
 # Two ways to get the fork's vLLM wheel, one gate for both (build/pins_gate.py):
@@ -180,6 +181,22 @@ pip uninstall -y -q vllm
 pip install -q -c /opt/llmkube/constraints.txt "$whl"
 cp /tmp/dist/vllm-install.txt /opt/llmkube/vllm-install.txt
 rm -rf /root/.cache/pip
+EOT
+
+# ---- 3.3a open upstream b12x PRs carried on the pin (patches/b12x/APPLIED.md), applied before b12x is installed ----
+# A patch's new files are then recorded with `git add -N` (intent to add), so the clean after install keeps them and
+# the pins gate sees them as part of the checkout; the gate proves the checkout is the pin plus exactly these patches.
+# Not `git apply --intent-to-add`: git 2.43 (this base) drops every other index entry when it is used without --index.
+RUN <<'EOT'
+set -eu
+for p in /opt/llmkube/patches/b12x/*.patch; do
+  git -C /src/b12x apply --check "$p"
+  git -C /src/b12x apply "$p"
+  git -C /src/b12x apply --summary "$p" | awk '/ create mode /{print $NF}' | while read -r f; do
+    git -C /src/b12x add -N -- "$f"
+  done
+  echo "applied $(basename "$p")"
+done
 EOT
 
 # ---- 3.3 b12x at its pinned commit, with its dependency pins (cutlass-dsl 4.7.1 and libs, apache-tvm-ffi <0.2) ----

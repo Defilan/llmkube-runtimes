@@ -13,6 +13,12 @@ Run at build (after every install) and again by the Tier-1 gate against the ship
                         wheel (VLLM_WHEEL_URL, hash-verified); a set VLLM_WHEEL_SHA256 must match it. The single
                         installed vllm's version must carry the fork commit (setuptools-scm's +g<hash>).
   MD5SUMS.txt           "md5-prefix file" for vendored files in patches/; an empty list is valid.
+  <name>/*.patch        an open upstream PR carried on top of the pin (patches/<name>/APPLIED.md records each one:
+                        file, upstream, head SHA, author, scope, form, marker, sha256). The checkout may then differ
+                        from the pin only by exactly those patches, applied in filename order (new files `git add -N`):
+                        its changed and new files must be the patches' files, reversing the patches must leave a
+                        clean checkout at the pin, every file a patch touches under <name>/ is byte-identical in
+                        dist-packages, and each patch's marker string appears in one of those installed files.
 
 Both pin files must name what this image is (vllm and b12x commits; torch, flashinfer-python and b12x versions): an
 emptied or truncated file fails rather than checking nothing. Origins must be exactly the pinned GitHub repo.
@@ -36,6 +42,7 @@ REQUIRED_COMMITS = ("vllm", "b12x")
 REQUIRED_DISTS = ("torch", "flashinfer-python", "b12x")
 HEX40 = re.compile(r"[0-9a-f]{40}")
 HEX64 = re.compile(r"[0-9a-f]{64}")
+DIFF_GIT = re.compile(r"^diff --git a/(\S+) b/(\S+)$", re.M)
 
 
 def _rows(path: Path) -> list[list[str]]:
@@ -67,6 +74,79 @@ def installed(site: Path, dist: str) -> list[str]:
     return [d.version for d in md.distributions(path=[str(site)]) if _norm(d.metadata["Name"] or "") == _norm(dist)]
 
 
+def _applied_rows(path: Path) -> dict[str, dict[str, str]]:
+    """APPLIED.md table rows keyed by patch file name (cells: file upstream head author scope form marker sha256)."""
+    out: dict[str, dict[str, str]] = {}
+    if not path.is_file():
+        return out
+    for line in path.read_text().splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) != 8 or not cells[0].endswith(".patch"):
+            continue
+        out[cells[0]] = {"upstream": cells[1], "marker": cells[6], "sha256": cells[7]}
+    return out
+
+
+def _status_paths(repo: Path) -> set[str]:
+    """Paths that differ from HEAD in the index or the work tree, including untracked files."""
+    r = subprocess.run(["git", "-C", str(repo), "status", "--porcelain", "-z", "--untracked-files=all"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"git status: {r.stderr.strip()}")
+    paths: set[str] = set()
+    entries = iter(r.stdout.split("\0"))
+    for entry in entries:
+        if len(entry) > 3:
+            paths.add(entry[3:])
+            if entry[0] in "RC":  # a rename or copy record is followed by its source path
+                next(entries, None)
+    return paths
+
+
+def check_patches(name: str, pdir: Path, checkout: Path) -> tuple[list[str], list[str], list[str]]:
+    """Verify the checkout is the pin plus exactly the carried patches; returns errors, touched files, markers."""
+    import shutil
+    import tempfile
+    errors: list[str] = []
+    patches = sorted(pdir.glob("*.patch"))
+    rows = _applied_rows(pdir / "APPLIED.md")
+    touched: list[str] = []
+    source: dict[str, str] = {}
+    markers: list[str] = []
+    for p in patches:
+        row = rows.get(p.name)
+        if row is None:
+            errors.append(f"{name}: {p.name} has no row in {pdir.name}/APPLIED.md")
+            continue
+        got = hashlib.sha256(p.read_bytes()).hexdigest()
+        if got != row["sha256"]:
+            errors.append(f"{name}: {p.name} sha256 {got}, APPLIED.md records {row['sha256']}")
+        markers.append(row["marker"])
+        for _, b in DIFF_GIT.findall(p.read_text(errors="replace")):
+            if b not in touched:
+                touched.append(b)
+                source[b] = p.name
+    changed = _status_paths(checkout)
+    for path in sorted(changed - set(touched)):
+        errors.append(f"{name}: {checkout} changes {path}, which no carried patch in {pdir} touches")
+    for path in sorted(set(touched) - changed):
+        errors.append(f"{name}: {checkout} does not carry {path}, which {source.get(path, 'a recorded patch')} changes")
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / name
+        shutil.copytree(checkout, copy, symlinks=True)
+        try:
+            _git(copy, "reset", "-q")
+            for p in reversed(patches):
+                _git(copy, "apply", "-R", "--whitespace=nowarn", str(p))
+            left = _status_paths(copy)
+        except RuntimeError as e:
+            errors.append(f"{name}: reversing the carried patches does not restore the pin ({e})")
+        else:
+            if left:
+                errors.append(f"{name}: after reversing the carried patches, {' '.join(sorted(left))} still differ from the pin")
+    return errors, touched, markers
+
+
 def check_commits(root: Path, src: Path, site: Path) -> tuple[list[str], dict[str, str]]:
     errors: list[str] = []
     pins: dict[str, str] = {}
@@ -93,17 +173,29 @@ def check_commits(root: Path, src: Path, site: Path) -> tuple[list[str], dict[st
             continue
         if not origin_matches(origin, repo):
             errors.append(f"{name}: {checkout} origin is {origin}, UPSTREAM_COMMITS pins repo {repo}")
-        if dirty:
+        pdir = root / "patches" / name
+        patched: list[str] = []
+        markers: list[str] = []
+        if pdir.is_dir() and any(pdir.glob("*.patch")):
+            perrors, patched, markers = check_patches(name, pdir, checkout)
+            errors += perrors
+        elif dirty:
             errors.append(f"{name}: {checkout} has modified tracked files: {' '.join(dirty.split())}")
-        tracked = [t for t in tracked if t]
+        tracked = sorted({t for t in tracked if t} | {f for f in patched if f.startswith(name + "/")})
         if not tracked:
             errors.append(f"{name}: no tracked {name}/*.py in {checkout}; the package layout changed")
         for rel in tracked:
             dst = site / rel
+            if not (checkout / rel).is_file():
+                continue  # a carried patch's file missing from the checkout is reported by check_patches
             if not dst.is_file():
                 errors.append(f"{name}: {rel} is tracked at {commit[:12]} but not installed in {site}")
             elif dst.read_bytes() != (checkout / rel).read_bytes():
-                errors.append(f"{name}: installed {rel} differs from {commit[:12]}")
+                errors.append(f"{name}: installed {rel} differs from {commit[:12]}" + (" + carried patches" if patched else ""))
+        for marker in markers:
+            hits = [f for f in patched if (site / f).is_file() and marker in (site / f).read_text(errors="replace")]
+            if not hits:
+                errors.append(f"{name}: carried patch marker {marker!r} is in none of the installed patched files")
     for name in REQUIRED_COMMITS:
         if name not in pins:
             errors.append(f"{name}: no entry in UPSTREAM_COMMITS.txt; the image cannot be checked against a pin")
