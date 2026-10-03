@@ -6,9 +6,18 @@ sm_121a). Every input is pinned: the vLLM base by digest, the fork and b12x by c
 (`patches/UPSTREAM_COMMITS.txt`), FlashInfer and the other load-bearing packages by version and, where downloaded
 directly, by sha256 (`patches/PINNED_DISTS.txt`). `build/pins_gate.py` fails the build on any drift.
 
-No source patches. The fork pads V4.1 attention from 64 heads / 8 output groups to 72 / 9 for TP3 itself
+The fork pads V4.1 attention from 64 heads / 8 output groups to 72 / 9 for TP3 itself
 (`vllm/model_executor/models/config.py`, `DeepseekV41ForCausalLMConfig.update_model_config_for_parallelism`), and
 its own test for that hook runs in the image.
+
+b12x is pinned at `6380e581`, the head of upstream's `evidence/ds41-x4t-serving-20260929` branch and the only ref
+with `b12x/moe/checkpoints/independent.py` (the trellis-dense-checkpoint/1 reader). Three source patches are carried
+on the pins until they land upstream, each recorded in `patches/<name>/APPLIED.md` and drift-gated by
+`build/pins_gate.py`: b12x#457 (switchless-ring RoCE routing), and a pair that lets the fork's DS4.1 trellis config
+(`patches/vllm/0001`) and b12x's checkpoint reader (`patches/b12x/0002`) load exllamav3 mcg K3..K6 trellis
+checkpoints as well as lut_e4m3 K2. The vLLM patch is applied before the compile, so the wheel is the pin plus
+exactly that patch. That pin still declares `nvidia-cutlass-dsl==4.6.2` (upstream master moved to 4.7.1 with no
+source change), so b12x is installed `--no-deps` against the fork's 4.7.1.
 
 ## Build route
 
@@ -106,12 +115,13 @@ NOTICE says so, and the OCI label is `Apache-2.0 AND BSD-3-Clause AND MIT AND Li
   profiler-api) pinned by version from NVIDIA's ubuntu2404/sbsa repo. The base is a runtime image and torch's
   `ATen/cuda/CUDAContextLight.h` includes `cusparse.h` and `cusolverDn.h`. That stage is not shipped.
 - `build/deps_gate.py`: `pip check` conflicts fail the build when either side is vllm, b12x or a
-  `PINNED_DISTS.txt` package, unless a commented regex in `patches/PIP_CHECK_ALLOW.txt` (empty today) accepts it.
+  `PINNED_DISTS.txt` package, unless a commented regex in `patches/PIP_CHECK_ALLOW.txt` accepts it.
   Other inherited conflicts are printed. It also scans every installed distribution's License,
   License-Expression and classifiers for AGPL/Affero.
 
-- `build/pins_gate.py`: `/src/vllm` and `/src/b12x` are clean checkouts at the pinned commits of the pinned repos;
-  every tracked `vllm/**/*.py` and `b12x/**/*.py` is byte-identical in dist-packages; one vllm is installed and its
+- `build/pins_gate.py`: `/src/vllm` and `/src/b12x` are checkouts at the pinned commits of the pinned repos, clean
+  or differing by exactly the carried patches (recorded sha256, changed files equal the patches' files, reversing
+  them restores the pin, each patched file installed byte-identical, each marker present); every tracked `vllm/**/*.py` and `b12x/**/*.py` is byte-identical in dist-packages; one vllm is installed and its
   version carries the fork commit; each `PINNED_DISTS.txt` package is installed exactly once at its version; the
   vLLM install record matches the wheel ARGs; vendored files match `MD5SUMS.txt` (none today). Both pin files
   must name vllm and b12x (commits) and torch, flashinfer-python and b12x (versions), so an emptied file fails,
