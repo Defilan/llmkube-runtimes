@@ -3,6 +3,13 @@
 Base: `local-inference-lab/b12x` commit `6380e581f075df7f01a72d4b67f016225f260c86`, the head of upstream's
 `evidence/ds41-x4t-serving-20260929` branch (`patches/UPSTREAM_COMMITS.txt`); it is the only upstream ref that has
 `b12x/moe/checkpoints/independent.py`, the trellis-dense-checkpoint/1 reader.
+The move from the `0d6600e6` master line drops three master commits the evidence branch lacks: `ba090286` (legacy
+tensor-based API compatibility, including `b12x/moe/fused_moe/_compat.py` and the hasattr guards in
+`b12x/integration/vllm/loader.py` and `plugin.py`), `0d6600e6` (launch heuristics) and `4bacd509` (CUTLASS DSL 4.7.1
+pins). That is acceptable because the fork's DS4.1 path uses the `b12x.preparation.PreparedCall` APIs and explicit
+plans, every b12x import in the fork resolves at `6380e581`, and the loader's `weight_utils` imports
+(`file_source_tensor`, `safetensors_file_sources`) exist in the fork; the CUTLASS pin is handled in
+`PIP_CHECK_ALLOW.txt`. See the image README.
 The Dockerfile applies every `*.patch` here in filename order with `git apply --check` then `git apply`,
 records each patch's new files with `git add -N`, and then installs b12x. `build/pins_gate.py` checks each file against the table
 below (sha256), that the checkout differs from the pin by exactly these patches, that every patched file under
