@@ -1,0 +1,28 @@
+diff --git a/vllm/models/deepseek_v4_1/nvidia/model.py b/vllm/models/deepseek_v4_1/nvidia/model.py
+index 7777bbc..cca9f3c 100644
+--- a/vllm/models/deepseek_v4_1/nvidia/model.py
++++ b/vllm/models/deepseek_v4_1/nvidia/model.py
+@@ -393,16 +393,13 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
+         # candidate_source_layer_id publishes the top candidate blocks of
+         # compressed positions here; later ratio-1 indexers (24/28/32/36)
+         # mask their scores with it.
+-        candidate_source_layer = getattr(config, "candidate_source_layer_id", -1)
+-        candidate_topk_blocks = getattr(config, "candidate_topk_blocks", 0)
+-        if candidate_source_layer >= 0 and candidate_topk_blocks > 0:
+-            self.candidate_block_buffer = torch.empty(
+-                vllm_config.scheduler_config.max_num_batched_tokens,
+-                candidate_topk_blocks,
+-                dtype=torch.int32,
+-            )
+-        else:
+-            self.candidate_block_buffer = None
++        # DS4.1 TP3 (three DGX Sparks), carried by llmkube-runtimes: the b12x
++        # attention on this path (DeepseekV41B12xAttention) accepts but never
++        # stores or reads candidate_block_buffer; it keeps its own _candidates
++        # workspace. Allocating it here cost max_num_batched_tokens x
++        # candidate_topk_blocks int32 (32 MiB at 4096 x 2048) of unified memory
++        # per rank for nothing.
++        self.candidate_block_buffer = None
+ 
+         if get_pp_group().is_first_rank:
+             self.embed_tokens = VocabParallelEmbedding(
