@@ -34,6 +34,12 @@ drifts away" as a generation gets longer), the CSF loader (vllm-956-*), and the 
   against 78ee52c3: every hunk is byte-identical to the sibling's copy and applies with no offset; only one `index`
   line differs because upstream changed `_oneshot_cute.py` outside the patch's hunks.
 - **vllm/0001**, DS4.1 MXFP4-CSF at TP3 (authored here, not yet proposed upstream). See "MXFP4-CSF" below.
+- **vllm/0002-0004**, unified-memory headroom for DSpark on three Sparks (authored here, not proposed upstream; see
+  `patches/vllm/APPLIED.md` for each one's evidence): 0002 caps DeepSeek-V4.1's fp32 RoPE tables at `max_model_len`
+  when `LLMKUBE_DSV41_ROPE_ROWS=max_model_len` (-384 MiB/rank at 262K, kept rows byte-identical, default unchanged);
+  0003 stops allocating `candidate_block_buffer`, which the b12x attention never reads (-32 MiB/rank); 0004 writes
+  phase-tagged PyTorch allocator snapshots when `LLMKUBE_MEMORY_STATS_DIR` is set (inert otherwise), for the memory
+  census. `_mtp_hidden_buffer` is deliberately not gated: the model runner slices it on every DSpark step.
 - **nccl/0001**, NVIDIA/nccl#2393 (AArch64 IB send-path fence). See "NCCL" below.
 
 ## MXFP4-CSF

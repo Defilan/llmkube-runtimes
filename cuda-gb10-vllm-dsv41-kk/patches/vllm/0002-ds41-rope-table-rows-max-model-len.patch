@@ -1,0 +1,46 @@
+diff --git a/vllm/model_executor/layers/rotary_embedding/deepseek_scaling_rope.py b/vllm/model_executor/layers/rotary_embedding/deepseek_scaling_rope.py
+index f5e6472..a0dc5e1 100644
+--- a/vllm/model_executor/layers/rotary_embedding/deepseek_scaling_rope.py
++++ b/vllm/model_executor/layers/rotary_embedding/deepseek_scaling_rope.py
+@@ -2,6 +2,7 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ import math
++import os
+ 
+ import torch
+ 
+@@ -241,10 +242,32 @@ class DeepseekV4ScalingRotaryEmbedding(DeepseekScalingRotaryEmbedding):
+         cache_fp32 = self._compute_cos_sin_cache()
+         self.register_buffer("cos_sin_cache", cache_fp32, persistent=False)
+ 
++    def _cos_sin_cache_rows(self) -> int | float:
++        """Rows of the fp32 cos/sin table to build.
++
++        The table covers original_max_position * scaling_factor positions (1M for
++        DeepSeek-V4.1: two fp32 tables of 256 B/row, 512 MiB per rank), but the
++        scheduler never places an input past max_model_len. With
++        LLMKUBE_DSV41_ROPE_ROWS=max_model_len the table stops at max_model_len
++        plus a margin for draft positions; every row it keeps is identical to the
++        full table's (row i depends only on i and inv_freq, and inv_freq still
++        uses the original max position). DS4.1 TP3 (three DGX Sparks): carried
++        by llmkube-runtimes to free unified memory for DSpark.
++        """
++        full = self.max_position_embeddings * self.scaling_factor
++        if os.environ.get("LLMKUBE_DSV41_ROPE_ROWS", "") != "max_model_len":
++            return full
++        from vllm.config import get_current_vllm_config_or_none
++
++        config = get_current_vllm_config_or_none()
++        if config is None or config.model_config is None:
++            return full
++        return min(full, int(config.model_config.max_model_len) + 1024)
++
+     def _compute_cos_sin_cache(self) -> torch.Tensor:
+         inv_freq = self._compute_inv_freq(self.scaling_factor)
+         t = torch.arange(
+-            self.max_position_embeddings * self.scaling_factor,
++            self._cos_sin_cache_rows(),
+             device=inv_freq.device,
+             dtype=torch.float32,
+         )

@@ -1,0 +1,123 @@
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+index 3c12397..23718a1 100644
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -1783,3 +1783,12 @@ def init_worker_distributed_environment(
+     # Init ec connector here before KV caches init
+     # NOTE: We do not init KV caches for Encoder-only instance in EPD disagg mode
+     ensure_ec_transfer_initialized(vllm_config)
++
++
++# llmkube-runtimes carried patch: phase-tagged allocator snapshots for memory
++# censuses on DGX Spark (DS4.1 TP3 (three DGX Sparks)); inert unless
++# LLMKUBE_MEMORY_STATS_DIR is set.
++if os.environ.get("LLMKUBE_MEMORY_STATS_DIR"):
++    from vllm.v1.worker import llmkube_memory_stats as _llmkube_memory_stats
++
++    _llmkube_memory_stats.instrument(Worker)
+diff --git a/vllm/v1/worker/llmkube_memory_stats.py b/vllm/v1/worker/llmkube_memory_stats.py
+new file mode 100644
+index 0000000..a991012
+--- /dev/null
++++ b/vllm/v1/worker/llmkube_memory_stats.py
+@@ -0,0 +1,100 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Phase-tagged allocator snapshots for memory censuses on unified-memory GPUs.
++
++Carried by llmkube-runtimes for the DS4.1 TP3 (three DGX Sparks) DSpark headroom
++work. Enabled only when LLMKUBE_MEMORY_STATS_DIR is set: each worker appends one
++JSON line per phase to <dir>/memstats-rank<rank>.jsonl with the PyTorch caching
++allocator's counters (allocated, reserved, inactive split blocks, retries),
++cudaMemGetInfo and the process RSS. Phases: after load_model ("weights"), after
++initialize_from_config ("kv"), after compile_or_warm_up_model ("graphs"), and
++from execute_model at most every LLMKUBE_MEMORY_STATS_INTERVAL seconds (default
++60) ("steady"). Read-only with respect to the model: it never allocates on the
++device or changes allocator settings.
++"""
++
++import functools
++import json
++import os
++import time
++
++import torch
++
++_KEYS = (
++    "allocated_bytes.all.current",
++    "allocated_bytes.all.peak",
++    "reserved_bytes.all.current",
++    "reserved_bytes.all.peak",
++    "inactive_split_bytes.all.current",
++    "active_bytes.all.current",
++    "num_alloc_retries",
++    "num_ooms",
++    "num_device_alloc",
++    "num_device_free",
++)
++
++
++def _rss_bytes() -> int:
++    try:
++        with open("/proc/self/status") as f:
++            for line in f:
++                if line.startswith("VmRSS:"):
++                    return int(line.split()[1]) * 1024
++    except OSError:
++        pass
++    return -1
++
++
++def snapshot(phase: str, rank: int) -> None:
++    directory = os.environ.get("LLMKUBE_MEMORY_STATS_DIR")
++    if not directory:
++        return
++    record: dict = {"ts": time.time(), "phase": phase, "rank": rank, "pid": os.getpid()}
++    try:
++        if torch.cuda.is_available():
++            stats = torch.cuda.memory_stats()
++            record.update({k: stats.get(k) for k in _KEYS})
++            free, total = torch.cuda.mem_get_info()
++            record["device_free"] = free
++            record["device_total"] = total
++    except Exception as exc:  # a census must never break serving
++        record["error"] = repr(exc)
++    record["rss"] = _rss_bytes()
++    try:
++        os.makedirs(directory, exist_ok=True)
++        with open(os.path.join(directory, f"memstats-rank{rank}.jsonl"), "a") as f:
++            f.write(json.dumps(record) + "\n")
++    except OSError:
++        pass
++
++
++def instrument(worker_cls) -> None:
++    """Wrap the worker's phase methods so each records a snapshot on return."""
++    interval = float(os.environ.get("LLMKUBE_MEMORY_STATS_INTERVAL", "60"))
++
++    def after(method_name: str, phase: str):
++        original = getattr(worker_cls, method_name)
++
++        @functools.wraps(original)
++        def wrapper(self, *args, **kwargs):
++            result = original(self, *args, **kwargs)
++            snapshot(phase, getattr(self, "rank", -1))
++            return result
++
++        setattr(worker_cls, method_name, wrapper)
++
++    after("load_model", "weights")
++    after("initialize_from_config", "kv")
++    after("compile_or_warm_up_model", "graphs")
++
++    original_execute = worker_cls.execute_model
++
++    @functools.wraps(original_execute)
++    def execute_model(self, *args, **kwargs):
++        result = original_execute(self, *args, **kwargs)
++        now = time.monotonic()
++        if now - getattr(self, "_llmkube_memstats_last", 0.0) >= interval:
++            self._llmkube_memstats_last = now
++            snapshot("steady", getattr(self, "rank", -1))
++        return result
++
++    worker_cls.execute_model = execute_model
