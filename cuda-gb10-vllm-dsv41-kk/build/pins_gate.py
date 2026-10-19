@@ -24,6 +24,10 @@ Run at build (after every install) and again by the Tier-1 gate against the ship
                         its changed and new files must be the patches' files, reversing the patches must leave a
                         clean checkout at the pin, every file a patch touches under <name>/ is byte-identical in
                         dist-packages, and each patch's marker string appears in one of those installed files.
+  <name>/<dir>/series   a third-party patch series kept verbatim (e.g. spark-ds41f/), applied after <name>/*.patch in
+                        the order its series file lists (build/apply_carried_patches.sh), with its own APPLIED.md in
+                        <dir>/ in the same format. Its patches join the checks above in that order; the series must list
+                        every *.patch in <dir>/ exactly once and nothing that is not there.
 
 Both pin files must name what this image is (vllm, b12x and nccl commits; torch, flashinfer-python and b12x versions): an
 emptied or truncated file fails rather than checking nothing. Origins must be exactly the pinned GitHub repo.
@@ -110,32 +114,62 @@ def _status_paths(repo: Path) -> set[str]:
     return paths
 
 
-def check_patches(name: str, pdir: Path, checkout: Path) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Verify the checkout is the pin plus exactly the carried patches; returns errors, touched files, markers and the
-    patches' sha256 in filename order."""
-    import shutil
-    import tempfile
+def _series_names(series: Path) -> list[str]:
+    """A series file's patch names in order: one per line, '#' starts a comment."""
+    return [n for n in (line.split("#", 1)[0].strip() for line in series.read_text().splitlines()) if n]
+
+
+def carried_patches(name: str, pdir: Path) -> tuple[list[str], list[Path]]:
+    """The carried patches in the order build/apply_carried_patches.sh applies them: <pdir>/*.patch in filename order,
+    then each series subdirectory (one holding a `series` file) in directory-name order, its patches in listed order.
+    A series must list every *.patch in its directory exactly once, and nothing else."""
     errors: list[str] = []
     patches = sorted(pdir.glob("*.patch"))
-    rows = _applied_rows(pdir / "APPLIED.md")
+    for series in sorted(pdir.glob("*/series")):
+        sdir = series.parent
+        names = _series_names(series)
+        rel = f"{pdir.name}/{sdir.name}/series"
+        for dup in sorted({n for n in names if names.count(n) > 1}):
+            errors.append(f"{name}: {rel} lists {dup} more than once")
+        for p in sorted(sdir.glob("*.patch")):
+            if p.name not in names:
+                errors.append(f"{name}: {sdir.name}/{p.name} is not listed in {rel}")
+        for n in dict.fromkeys(names):
+            if not (sdir / n).is_file():
+                errors.append(f"{name}: {rel} lists {n}, which is not in {sdir.name}/")
+            else:
+                patches.append(sdir / n)
+    return errors, patches
+
+
+def check_patches(name: str, pdir: Path, checkout: Path) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Verify the checkout is the pin plus exactly the carried patches; returns errors, touched files, markers and the
+    patches' sha256 in apply order (carried_patches)."""
+    import shutil
+    import tempfile
+    errors, patches = carried_patches(name, pdir)
+    tables: dict[Path, dict[str, dict[str, str]]] = {}
     touched: list[str] = []
     source: dict[str, str] = {}
     markers: list[str] = []
     shas: list[str] = []
     for p in patches:
-        row = rows.get(p.name)
+        if p.parent not in tables:
+            tables[p.parent] = _applied_rows(p.parent / "APPLIED.md")
+        row = tables[p.parent].get(p.name)
+        label = p.relative_to(pdir).as_posix()
         if row is None:
-            errors.append(f"{name}: {p.name} has no row in {pdir.name}/APPLIED.md")
+            errors.append(f"{name}: {label} has no row in {p.parent.relative_to(pdir.parent).as_posix()}/APPLIED.md")
             continue
         got = hashlib.sha256(p.read_bytes()).hexdigest()
         shas.append(got)
         if got != row["sha256"]:
-            errors.append(f"{name}: {p.name} sha256 {got}, APPLIED.md records {row['sha256']}")
+            errors.append(f"{name}: {label} sha256 {got}, APPLIED.md records {row['sha256']}")
         markers.append(row["marker"])
         for _, b in DIFF_GIT.findall(p.read_text(errors="replace")):
             if b not in touched:
                 touched.append(b)
-                source[b] = p.name
+                source[b] = label
     changed = _status_paths(checkout)
     for path in sorted(changed - set(touched)):
         errors.append(f"{name}: {checkout} changes {path}, which no carried patch in {pdir} touches")
@@ -211,7 +245,7 @@ def check_commits(root: Path, src: Path, site: Path) -> tuple[list[str], dict[st
         patched: list[str] = []
         markers: list[str] = []
         shas: list[str] = []
-        if pdir.is_dir() and any(pdir.glob("*.patch")):
+        if pdir.is_dir() and (any(pdir.glob("*.patch")) or any(pdir.glob("*/series"))):
             perrors, patched, markers, shas = check_patches(name, pdir, checkout)
             errors += perrors
         elif dirty:

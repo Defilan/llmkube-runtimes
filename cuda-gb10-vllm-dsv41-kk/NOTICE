@@ -7,12 +7,56 @@ components (see "NVIDIA-proprietary components"). Attribution is a condition of 
 
 Vendored material (cuda-gb10-vllm-dsv41-kk/patches/)
 ----------------------------------------------------
-No vendored files. Besides the pins (UPSTREAM_COMMITS.txt, PINNED_DISTS.txt, MD5SUMS.txt), patches/b12x,
-patches/vllm and patches/nccl hold source patches applied to the pinned checkouts before they are built or
-installed, each recorded with its origin, author and sha256 in that directory's APPLIED.md:
-  b12x/0001  local-inference-lab/b12x#457 (switchless-ring RoCE routing), Apache-2.0 as b12x
-  vllm/0001  DS4.1 MXFP4-CSF reader accepts TP3 (authored in this repository), Apache-2.0 as vLLM
-  nccl/0001  NVIDIA/nccl#2393 (AArch64 IB send-path acquire fence, Stanislav Bardyuk), Apache-2.0 as NCCL
+Besides the pins (UPSTREAM_COMMITS.txt, PINNED_DISTS.txt, MD5SUMS.txt), patches/b12x, patches/vllm and patches/nccl
+hold source patches applied to the pinned checkouts before they are built or installed, each recorded with its
+origin, author and sha256 in that directory's APPLIED.md:
+  b12x/0001       local-inference-lab/b12x#457 (switchless-ring RoCE routing), Apache-2.0 as b12x
+  vllm/0001       DS4.1 MXFP4-CSF reader accepts TP3 (authored in this repository), Apache-2.0 as vLLM
+  vllm/0002-0004  DSpark memory headroom on three Sparks (authored in this repository), Apache-2.0 as vLLM
+  nccl/0001       NVIDIA/nccl#2393 (AArch64 IB send-path acquire fence, Stanislav Bardyuk), Apache-2.0 as NCCL
+
+The only vendored files are 24 patch files from spark-ds41f, unmodified, in patches/vllm/spark-ds41f/ (21) and
+patches/b12x/spark-ds41f/ (3), each listed with its md5 in MD5SUMS.txt and with its sha256 in that directory's
+APPLIED.md, and applied after the patches above in the order of that directory's series file:
+
+  spark-ds41f, https://github.com/christopherowen/spark-ds41f
+  commit a2a3abae7b395f98ef64dcc77beef1584d756cd6 (2026-10-18)
+  Copyright Christopher Owen and contributors
+  Licensed under the Apache License, Version 2.0 since commit ad4605b9e579c58d030f9527b7bb5a5cab9a4b7f
+  ("License the repository under Apache 2.0", PR #355). The license text is in LICENSE.spark-ds41f-Apache-2.0
+  (spark-ds41f's LICENSE file at that commit, verbatim).
+
+  spark-ds41f's README (License section) states that each patch series changes its upstream's code under that
+  project's license. Both upstreams here are Apache-2.0: the vLLM patches change local-inference-lab/vllm
+  (LICENSE.vllm-Apache-2.0) and the b12x patches change local-inference-lab/b12x (LICENSE.b12x-Apache-2.0).
+
+  Files, as they appear in spark-ds41f at that commit (patch headers, authorship and commit messages kept as is),
+  in apply order. vLLM (patches/vllm/spark-ds41f/):
+    patches/vllm/0024-deepseek-v41-compressor-ring-decode.patch
+    experiments/2026-10-17-r6u/vllm/0178-DeepSeek-V4.1-encoding-current-turn-thinking-across-.patch
+    experiments/2026-10-08-lil-rebase/vllm/0001-engram-projection-tp-padding.patch
+    experiments/2026-10-08-lil-rebase/vllm/0002-engram-async-disk-rows.patch
+    experiments/2026-10-08-lil-rebase/vllm/0005-dspark-pinned-cost-curves.patch
+    experiments/2026-10-08-lil-rebase/vllm/0007-dspark-v41-gathered-markov-bias.patch
+    experiments/2026-10-08-lil-rebase/vllm/0010-dspark-dead-verification-rows.patch
+    experiments/2026-10-08-lil-rebase/vllm/0012-dspark-vocab-parallel-greedy.patch
+    experiments/2026-10-08-lil-rebase/vllm/0013-dspark-main-proj-column-parallel.patch
+    experiments/2026-10-08-lil-rebase/vllm/0019-custom-op-fill-defaults-one-read.patch
+    experiments/2026-10-08-lil-rebase/vllm/0020-spec-decode-dead-row-kernel-warmup.patch
+    experiments/2026-10-08-lil-rebase/vllm/0039-dummy-context-disjoint-blocks.patch
+    experiments/2026-10-08-lil-rebase/vllm/0041-dummy-blocks-per-group.patch
+    experiments/2026-10-08-lil-rebase/vllm/0042-dspark-drafter-padding-rows.patch
+    experiments/2026-10-16-r6r/vllm/0144-Adaptive-verification-run-the-draft-budget-eagerly-r.patch
+    experiments/2026-10-08-lil-rebase/vllm/0014-deepseek-v41-prefill-sp-state.patch
+    experiments/2026-10-08-lil-rebase/vllm/0015-deepseek-v41-prefill-sp-dataflow.patch
+    experiments/2026-10-08-lil-rebase/vllm/0016-deepseek-v41-prefill-sp-ced-encoder.patch
+    experiments/2026-10-08-lil-rebase/vllm/0017-deepseek-v41-prefill-sp-local-attention-front.patch
+    experiments/2026-10-08-lil-rebase/vllm/0018-deepseek-v41-prefill-sp-transport-threshold.patch
+    experiments/2026-10-08-lil-rebase/vllm/0025-deepseek-v41-indexer-sp-split.patch
+  b12x (patches/b12x/spark-ds41f/):
+    patches/b12x/0003-dsa-topk-position-ties.patch
+    patches/b12x/0004-gemm-fence-stage-reads-before-tma-refill.patch
+    patches/b12x/0005-fence-stage-reads-three-kernels.patch
 
 Built from source at a pinned commit
 ------------------------------------

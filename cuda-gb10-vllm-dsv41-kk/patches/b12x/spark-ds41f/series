@@ -1,0 +1,9 @@
+# christopherowen/spark-ds41f patches carried on the b12x pin, applied in exactly this order by
+# build/apply_carried_patches.sh after the patches in patches/b12x/ itself (0001).
+# One file name per line; '#' starts a comment. Every *.patch in this directory is listed exactly once and every
+# listed file exists, or the apply script and build/pins_gate.py both fail. The files are verbatim from spark-ds41f
+# at a2a3abae7b395f98ef64dcc77beef1584d756cd6; APPLIED.md beside this file records each one's spark-ds41f path.
+# Lane A b1
+0003-dsa-topk-position-ties.patch
+0004-gemm-fence-stage-reads-before-tma-refill.patch
+0005-fence-stage-reads-three-kernels.patch

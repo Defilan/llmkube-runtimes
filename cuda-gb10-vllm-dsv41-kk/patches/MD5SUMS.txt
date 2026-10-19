@@ -1,2 +1,29 @@
-# md5-prefix file, for files vendored into patches/ from upstream. None today: the fork pads V4.1 attention heads for
-# TP3 itself, so nothing is overlaid. build/pins_gate.py accepts an empty list.
+# md5 file, for files vendored into patches/ from upstream (path relative to patches/; build/pins_gate.py checks each
+# listed md5 as a prefix of the file's md5, so a full md5 is the strictest form). The vendored files are the
+# christopherowen/spark-ds41f patches in vllm/spark-ds41f/ and b12x/spark-ds41f/, verbatim at a2a3abae7b (NOTICE);
+# their sha256 is also in each directory's APPLIED.md. The fork pads V4.1 attention heads for TP3 itself, so no
+# source file is overlaid.
+0e8d058aeef6f6cfed5a51cb22614098 b12x/spark-ds41f/0003-dsa-topk-position-ties.patch
+9fc05bf4688d6fe88021fa8901c5f6f6 b12x/spark-ds41f/0004-gemm-fence-stage-reads-before-tma-refill.patch
+92a06e3b44ce05254f24e91187770590 b12x/spark-ds41f/0005-fence-stage-reads-three-kernels.patch
+e2498e8c023312d33f2cba978a830f4d vllm/spark-ds41f/0001-engram-projection-tp-padding.patch
+2e95d636cf08938fb4d53d46d2f485ba vllm/spark-ds41f/0002-engram-async-disk-rows.patch
+463f07aae03f3606f6207117eeb1d4c0 vllm/spark-ds41f/0005-dspark-pinned-cost-curves.patch
+8141a090849ecafbbc73efe52ce5156b vllm/spark-ds41f/0007-dspark-v41-gathered-markov-bias.patch
+10d53066edafe63e824401a7ece7f3c6 vllm/spark-ds41f/0010-dspark-dead-verification-rows.patch
+f597103e73e4b5580ba3e0d5c47a07a7 vllm/spark-ds41f/0012-dspark-vocab-parallel-greedy.patch
+9f9398d22d0410547dfc5f878568f3a0 vllm/spark-ds41f/0013-dspark-main-proj-column-parallel.patch
+2679625aa8e24c409b025f96cd147e5a vllm/spark-ds41f/0014-deepseek-v41-prefill-sp-state.patch
+2d579022f3721ac3dc808993427c68cd vllm/spark-ds41f/0015-deepseek-v41-prefill-sp-dataflow.patch
+bba4c48e5855fa5d935161895c496d73 vllm/spark-ds41f/0016-deepseek-v41-prefill-sp-ced-encoder.patch
+a833f90b556a88c9ed49b80c58a7e258 vllm/spark-ds41f/0017-deepseek-v41-prefill-sp-local-attention-front.patch
+e795b0154f555f33837641dd31731ece vllm/spark-ds41f/0018-deepseek-v41-prefill-sp-transport-threshold.patch
+f761309edd38189bdc827028785701d1 vllm/spark-ds41f/0019-custom-op-fill-defaults-one-read.patch
+cbab82023e1c12c75cca459de8043cd5 vllm/spark-ds41f/0020-spec-decode-dead-row-kernel-warmup.patch
+e44628e3427122e6d14fa4de917a9cd6 vllm/spark-ds41f/0024-deepseek-v41-compressor-ring-decode.patch
+5faef7a9622d3d6617f2b97943c04283 vllm/spark-ds41f/0025-deepseek-v41-indexer-sp-split.patch
+8d8bd2692962029f85148f4616f1e9ed vllm/spark-ds41f/0039-dummy-context-disjoint-blocks.patch
+05f00290d45dafff706b4d0c530e6c63 vllm/spark-ds41f/0041-dummy-blocks-per-group.patch
+4afa4bac8e2074090644766e1a8bcad9 vllm/spark-ds41f/0042-dspark-drafter-padding-rows.patch
+9ef5ef48c1fa18524b5c48ee54081bd8 vllm/spark-ds41f/0144-Adaptive-verification-run-the-draft-budget-eagerly-r.patch
+024fd5eba90de1bea5155a03428aa38a vllm/spark-ds41f/0178-DeepSeek-V4.1-encoding-current-turn-thinking-across-.patch

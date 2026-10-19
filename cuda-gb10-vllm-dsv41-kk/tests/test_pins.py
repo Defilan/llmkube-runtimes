@@ -447,6 +447,156 @@ def test_unpatched_dirty_vllm_checkout_still_fails(image):
     assert r.returncode == 1 and "vllm/__init__.py" in r.stderr
 
 
+# ---- a third-party series (patches/<name>/<dir>/series + APPLIED.md), applied after the checkout's own patches ----
+
+SERIES = "spark-ds41f"
+
+
+def _series_steps(name: str) -> list[tuple[str, dict[str, str], str]]:
+    """Two stacked patches on one file, numbered like ours (0001), so only the listed order applies."""
+    modified = CARRY[name][0]
+    return [
+        ("0001-first.patch", {modified: "K = 'stack one'\n"}, "stack one"),
+        ("0002-second.patch", {modified: "K = 'stack one'\nJ = 'stack two'\n"}, "stack two"),
+    ]
+
+
+def _carry_series(image, name: str = "vllm", *, listed: list[str] | None = None, apply: bool = True) -> Path:
+    """Make a series on a scratch copy of the <name> checkout (on top of whatever is already applied), record it in
+    patches/<name>/spark-ds41f/, apply it with the Dockerfile's script and install the patched files."""
+    co = image["src"] / name
+    scratch = co.parent / f"{name}-series-scratch"
+    shutil.copytree(co, scratch)
+    _git(scratch, "add", "-A")
+    _git(scratch, "commit", "-q", "--allow-empty", "-m", "pin plus earlier carried patches")
+    sdir = image["root"] / "patches" / name / SERIES
+    sdir.mkdir(parents=True, exist_ok=True)
+    rows = ["| File | Upstream | Head SHA | Author | Scope | Form | Marker | sha256 |",
+            "|------|----------|----------|--------|-------|------|--------|--------|"]
+    touched: list[str] = []
+    steps = _series_steps(name)
+    for fname, files, marker in steps:
+        for rel, body in files.items():
+            (scratch / rel).write_text(body)
+            touched.append(rel)
+        _git(scratch, "add", "-A")
+        (sdir / fname).write_text(_git(scratch, "diff", "--cached", "--binary") + "\n")
+        _git(scratch, "commit", "-q", "-m", fname)
+        sha = hashlib.sha256((sdir / fname).read_bytes()).hexdigest()
+        rows.append(f"| {fname} | example/series {fname} | {'c' * 40} | t | x | verbatim | {marker} | {sha} |")
+    shutil.rmtree(scratch)
+    (sdir / "APPLIED.md").write_text("\n".join(rows) + "\n")
+    names = listed if listed is not None else [f for f, _, _ in steps]
+    (sdir / "series").write_text("# a comment, then the order\n" + "".join(f"{n}  # why\n" for n in names))
+    if apply:
+        # The checkout's own patches are applied already; a scratch patch dir holding only the series applies it.
+        only = image["root"] / f"only-series-{name}"
+        if only.exists():
+            shutil.rmtree(only)
+        shutil.copytree(sdir, only / SERIES)
+        subprocess.run(["bash", str(APPLY), str(only), str(co)], check=True, capture_output=True, text=True)
+        for rel in dict.fromkeys(touched):
+            (image["site"] / rel).write_text((co / rel).read_text())
+    return sdir
+
+
+@CARRIED
+def test_series_after_the_checkouts_own_patch_passes(image, name):
+    _carry_patch(image, name)
+    _carry_series(image, name)
+    r = run_gate(image)
+    assert r.returncode == 0, r.stderr
+
+
+def test_series_alone_on_a_checkout_passes(image):
+    _carry_series(image, "vllm")
+    r = run_gate(image)
+    assert r.returncode == 0, r.stderr
+
+
+def test_the_apply_script_applies_own_patches_then_the_series_in_listed_order(image, tmp_path):
+    # The whole patch directory in one call, as the Dockerfile runs it: 0001-routes.patch first (filename order), then
+    # the series' 0001 and 0002 in listed order, although their names sort between and after ours.
+    _carry_patch(image, "vllm")
+    sdir = _carry_series(image, "vllm")
+    pdir = sdir.parent
+    fresh = tmp_path / "fresh"
+    _checkout(fresh, "vllm", "local-inference-lab/vllm", VLLM_FILES)
+    r = subprocess.run(["bash", str(APPLY), str(pdir), str(fresh / "vllm")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    applied = [l.split()[1] for l in r.stdout.splitlines() if l.startswith("applied ")]
+    assert applied == ["0001-routes.patch", f"{SERIES}/0001-first.patch", f"{SERIES}/0002-second.patch"]
+    for rel in ("vllm/models/deepseek_v4_1/attention.py", "vllm/models/deepseek_v4_1/trellis.py"):
+        assert (fresh / "vllm" / rel).read_text() == (image["src"] / "vllm" / rel).read_text()
+
+
+def test_series_out_of_listed_order_does_not_apply(image):
+    with pytest.raises(subprocess.CalledProcessError):
+        _carry_series(image, "vllm", listed=["0002-second.patch", "0001-first.patch"])
+
+
+def test_series_with_an_unlisted_patch_fails_to_apply_and_fails_the_gate(image):
+    sdir = _carry_series(image, "vllm")
+    shutil.copy(sdir / "0002-second.patch", sdir / "0003-stray.patch")
+    r = run_gate(image)
+    assert r.returncode == 1 and f"{SERIES}/0003-stray.patch is not listed" in r.stderr
+    fresh = image["root"] / "fresh-src"
+    _checkout(fresh, "vllm", "local-inference-lab/vllm", VLLM_FILES)
+    r = subprocess.run(["bash", str(APPLY), str(sdir.parent), str(fresh / "vllm")], capture_output=True, text=True)
+    assert r.returncode != 0 and "0003-stray.patch is not listed" in r.stderr
+
+
+def test_series_listing_a_missing_file_fails(image):
+    sdir = _carry_series(image, "vllm")
+    (sdir / "series").write_text((sdir / "series").read_text() + "0009-gone.patch\n")
+    r = run_gate(image)
+    assert r.returncode == 1 and "lists 0009-gone.patch, which is not in" in r.stderr
+
+
+def test_series_listing_a_patch_twice_fails(image):
+    sdir = _carry_series(image, "vllm")
+    (sdir / "series").write_text((sdir / "series").read_text() + "0001-first.patch\n")
+    r = run_gate(image)
+    assert r.returncode == 1 and "lists 0001-first.patch more than once" in r.stderr
+
+
+def test_series_patch_needs_its_row_in_the_series_applied_md(image):
+    sdir = _carry_series(image, "vllm")
+    applied = sdir / "APPLIED.md"
+    applied.write_text("".join(l for l in applied.read_text().splitlines(True) if "0002-second.patch" not in l))
+    r = run_gate(image)
+    assert r.returncode == 1 and f"{SERIES}/0002-second.patch has no row in vllm/{SERIES}/APPLIED.md" in r.stderr
+
+
+def test_series_patch_with_wrong_recorded_sha_fails(image):
+    sdir = _carry_series(image, "vllm")
+    applied = sdir / "APPLIED.md"
+    text = applied.read_text()
+    sha = hashlib.sha256((sdir / "0001-first.patch").read_bytes()).hexdigest()
+    applied.write_text(text.replace(sha, "d" * 64))
+    r = run_gate(image)
+    assert r.returncode == 1 and f"{SERIES}/0001-first.patch sha256" in r.stderr
+
+
+@pytest.mark.parametrize("own_patch", [True, False])
+def test_series_applied_without_its_series_file_is_drift(image, own_patch):
+    if own_patch:
+        _carry_patch(image, "vllm")
+    sdir = _carry_series(image, "vllm")
+    (sdir / "series").unlink()
+    r = run_gate(image)
+    assert r.returncode == 1 and CARRY["vllm"][0] in r.stderr
+    # With our own patch on the same file, the stacked file no longer reverses to the pin; without one, it is plain drift.
+    assert ("reversing the carried patches" in r.stderr) if own_patch else ("has modified tracked files" in r.stderr), r.stderr
+
+
+def test_series_installed_file_must_carry_the_whole_stack(image):
+    _carry_series(image, "vllm")
+    (image["site"] / CARRY["vllm"][0]).write_text("K = 'stack one'\n")  # after the first patch only
+    r = run_gate(image)
+    assert r.returncode == 1 and CARRY["vllm"][0] in r.stderr and "stack two" in r.stderr
+
+
 # ---- the repository's own carried patches, as committed ----
 
 def _applied_table(pdir: Path) -> dict[str, list[str]]:
@@ -460,6 +610,15 @@ def _applied_table(pdir: Path) -> dict[str, list[str]]:
 
 # Each checkout's patches may touch only its own tree: the Python package for vllm and b12x, NCCL's src/ for nccl.
 SCOPE = {"b12x": "b12x/", "vllm": "vllm/", "nccl": "src/"}
+
+# The next two rules are for this repository's own patches, patches/<name>/*.patch, and deliberately do not reach the
+# spark-ds41f series in patches/<name>/spark-ds41f/ (they glob one level only). These are the two in-image tests the
+# DSv4.1 Lane A lab layers had to deselect when they recorded the series beside our patches: the series is kept
+# byte-for-byte as upstream published it, so its patches also change upstream test files (0178, b12x 0003 and others
+# add or update tests/), which the scope rule forbids for ours; and it is a stack applied strictly in its listed order
+# (0001 and 0002 both change engram.py, and several change files ours change too), which the no-overlap rule forbids
+# for ours so that any one of them applies alone. The series has its own checks below, and the pins gate proves the
+# checkout is the pin plus exactly our patches and then the series, in that order.
 
 
 @pytest.mark.parametrize("name", sorted(SCOPE))
@@ -487,6 +646,71 @@ def test_committed_patch_files_do_not_overlap():
         for f in re.findall(r"^diff --git a/(\S+) b/\S+$", p.read_text(), re.M):
             assert f not in seen, f"{f} is changed by both {seen[f]} and {p.name}"
             seen[f] = p.name
+
+
+# ---- the spark-ds41f series, as committed ----
+
+DS41F_COMMIT = "a2a3abae7b"
+# The DSv4.1 Lane A order: lab layer b1 (vLLM 0024, 0178; b12x 0003-0005), then b2 (13 vLLM patches), then b3 (6 vLLM
+# patches, sequence-parallel prefill). A reorder or an added or dropped patch has to change this list too.
+DS41F_ORDER = {
+    "vllm": ["0024", "0178",
+             "0001", "0002", "0005", "0007", "0010", "0012", "0013", "0019", "0020", "0039", "0041", "0042", "0144",
+             "0014", "0015", "0016", "0017", "0018", "0025"],
+    "b12x": ["0003", "0004", "0005"],
+}
+# A series patch may change its package tree and upstream's own tests, nothing else.
+DS41F_SCOPE = {"vllm": ("vllm/", "tests/"), "b12x": ("b12x/", "tests/")}
+
+
+def _series_file(sdir: Path) -> list[str]:
+    return [n for n in (l.split("#", 1)[0].strip() for l in (sdir / "series").read_text().splitlines()) if n]
+
+
+@pytest.mark.parametrize("name", sorted(DS41F_ORDER))
+def test_committed_series_is_listed_recorded_and_marked(name):
+    sdir = IMAGE_DIR / "patches" / name / "spark-ds41f"
+    listed = _series_file(sdir)
+    assert [n[:4] for n in listed] == DS41F_ORDER[name], listed
+    assert sorted(listed) == sorted(p.name for p in sdir.glob("*.patch")), "series lists every patch once, and only those"
+    rows = _applied_table(sdir)
+    assert sorted(rows) == sorted(listed), "every series patch has exactly one APPLIED.md row and vice versa"
+    for n in listed:
+        p = sdir / n
+        _, upstream, head, author, _, form, marker, sha = rows[n]
+        text = p.read_text(encoding="utf-8")  # 0178 carries non-ASCII test fixtures
+        assert text.startswith(f"From {head} "), (n, "Head SHA is the patch's own From line")
+        assert upstream.startswith("christopherowen/spark-ds41f ") and upstream.endswith(f" at {DS41F_COMMIT}"), n
+        assert author == "Christopher Owen" and "Christopher Owen" in text.splitlines()[1], n
+        assert form.startswith("verbatim upstream patch file"), n
+        assert hashlib.sha256(p.read_bytes()).hexdigest() == sha, n
+        files = re.findall(r"^diff --git a/(\S+) b/\S+$", text, re.M)
+        assert files and all(f.startswith(DS41F_SCOPE[name]) for f in files), (n, files)
+        assert any(f.startswith(name + "/") for f in files), (n, "changes nothing the image installs")
+        added = "".join(l[1:] for l in text.splitlines(True) if l.startswith("+") and not l.startswith("+++"))
+        assert marker in added, f"{n}: marker {marker!r} is not in a line the patch adds"
+
+
+def test_md5sums_list_exactly_the_vendored_series_files():
+    rows = [l.split() for l in (IMAGE_DIR / "patches" / "MD5SUMS.txt").read_text().splitlines()
+            if l.strip() and not l.startswith("#")]
+    vendored = sorted(p.relative_to(IMAGE_DIR / "patches").as_posix()
+                      for p in (IMAGE_DIR / "patches").glob("*/spark-ds41f/*.patch"))
+    assert len(vendored) == sum(len(v) for v in DS41F_ORDER.values()) == 24
+    assert sorted(r[1] for r in rows) == vendored
+    for md5, rel in rows:
+        assert hashlib.md5((IMAGE_DIR / "patches" / rel).read_bytes()).hexdigest() == md5, rel
+
+
+def test_spark_ds41f_license_and_notice_travel():
+    # Both in the source tree and in the image (/opt/llmkube), the license text sits beside NOTICE.
+    lic = (IMAGE_DIR / "LICENSE.spark-ds41f-Apache-2.0").read_text()
+    assert "Apache License" in lic and "Version 2.0, January 2004" in lic
+    notice = (IMAGE_DIR / "NOTICE").read_text()
+    assert "christopherowen/spark-ds41f" in notice and "a2a3abae7b395f98ef64dcc77beef1584d756cd6" in notice
+    for name in DS41F_ORDER:
+        for n in _series_file(IMAGE_DIR / "patches" / name / "spark-ds41f"):
+            assert n in notice, f"NOTICE does not list {name}/spark-ds41f/{n}"
 
 
 @pytest.mark.skipif(not (IMAGE_DIR / "Dockerfile").is_file(), reason="the image ships no Dockerfile")

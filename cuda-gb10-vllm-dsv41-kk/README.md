@@ -9,7 +9,8 @@ checkpoint reader. Every input is pinned: the vLLM base by digest, the fork, b12
 directly, by sha256 (`patches/PINNED_DISTS.txt`). `build/pins_gate.py` fails the build on any drift.
 
 It is built like the `cuda-gb10-vllm-dsv41-b12x` sibling (same base, same compile recipe, same gates); what differs is
-the pins, the carried patches, and a source-built NCCL. The sibling stays as it is (it serves the mcg trellis
+the pins, the carried patches (this repository's own, plus 24 verbatim patches from `christopherowen/spark-ds41f`, see
+"Carried from spark-ds41f"), and a source-built NCCL. The sibling stays as it is (it serves the mcg trellis
 checkpoints on the evidence branch).
 
 ## Pins
@@ -41,6 +42,59 @@ drifts away" as a generation gets longer), the CSF loader (vllm-956-*), and the 
   phase-tagged PyTorch allocator snapshots when `LLMKUBE_MEMORY_STATS_DIR` is set (inert otherwise), for the memory
   census. `_mtp_hidden_buffer` is deliberately not gated: the model runner slices it on every DSpark step.
 - **nccl/0001**, NVIDIA/nccl#2393 (AArch64 IB send-path fence). See "NCCL" below.
+- **vllm/spark-ds41f/** (21) and **b12x/spark-ds41f/** (3): the DSv4.1 Lane A series from
+  `christopherowen/spark-ds41f` at `a2a3abae7b`, applied after the patches above. See "Carried from spark-ds41f".
+
+## Carried from spark-ds41f
+
+The DSv4.1 Lane A serving image is this image's published `8fe1e18d...` digest plus three in-cluster lab layers
+(b1, b2, b3) that applied 24 patches from `christopherowen/spark-ds41f` at
+`a2a3abae7b395f98ef64dcc77beef1584d756cd6` (Apache-2.0 since `ad4605b9`; NOTICE, `LICENSE.spark-ds41f-Apache-2.0`).
+They are carried here instead, so CI builds and attests what is served. Each file is byte-for-byte what spark-ds41f
+publishes (headers, authorship and commit messages kept), so their numbering repeats ours (their vLLM 0001 is not
+ours): they live in `patches/<name>/spark-ds41f/`, with a `series` file giving the apply order, an `APPLIED.md` in the
+same format as ours (spark-ds41f path, head SHA, author, scope, default, marker, sha256), and an md5 line each in
+`patches/MD5SUMS.txt`. `build/apply_carried_patches.sh` applies `patches/<name>/*.patch` in filename order and then
+the series strictly in listed order, in the compile stage and in the image's checkouts alike; `build/pins_gate.py`
+checks the checkouts against the same order. Strict-apply check: on vLLM 1286ae9c plus our 0001-0004, the 21 vLLM
+patches apply with `git apply` in series order, and on b12x 78ee52c3 plus our 0001 the three b12x patches do, all with
+no fuzz (eleven vLLM patches land at line offsets with their full context matching; the b12x ones at none). All 24
+change Python only (plus upstream test files), so the compiled extensions are the same.
+
+The order is the lab layers' order: b1, then b2, then b3. Which patches are always on and which need a switch, from the
+lab READMEs (llmkube-internal `plans/dsv41-3spark/manifests/lane-a-b1/README.md`, "The patches", and
+`plans/dsv41-3spark/manifests/lane-a-b23/README.md`, "The patches and their switches"):
+
+| Patch | Layer | What it does | Default |
+|-------|-------|--------------|---------|
+| vLLM 0024 | b1 | the ratio-2 compressor ring is written during decode (it was never written, so steps starting at an odd position built compressed KV entries from a zeroed predecessor, reused through prefix caching) | always on |
+| vLLM 0178 | b1 | DeepSeek's 2026-10-16 V4.1 encoding fix: the current turn's reasoning survives its tool results, tool-result images follow their placeholders in call order (new `DeepseekV41Renderer`), image tokens in text are refused | always on with `--tokenizer-mode deepseek_v41` |
+| b12x 0003 | b1 | DSA radix top-k breaks exact score ties by lowest logical position instead of thread timing | always on |
+| b12x 0004 | b1 | dense GEMM fences generic-proxy stage reads before the TMA refill (shared-expert down projection returned wrong columns beside the routed MoE) | always on |
+| b12x 0005 | b1 | the same fence in the BF16 prefill projection, the mHC TF32 and BF16 TMA projections and the contiguous attention forward | always on |
+| vLLM 0001 | b2 | pads the Engram WKV projection so `projection_tp` works at TP3 | off: `--engram-config` with `"projection_tp":true` |
+| vLLM 0002 | b2 | reads disk Engram rows on a reader thread beside the graph launch (carried because 0015 builds on it) | off: `SPARK3_ENGRAM_ASYNC=1` |
+| vLLM 0005 | b2 | pins adaptive-verification cost curves to files per shape set | off: `SPARK3_DSPARK_COST_DIR=<dir>` |
+| vLLM 0007 | b2 | gathered Markov bias for the V4.1 drafter (carried because 0012 builds on it) | off: `dspark_draft_topk` in the speculative config |
+| vLLM 0010 | b2 | dead verification rows below a survival cut read no expert weights | off: `SPARK3_DSPARK_DEAD_ROWS_TAU` (e.g. `0.2`) |
+| vLLM 0012 | b2 | vocabulary-parallel greedy drafts | off: `SPARK3_DSPARK_VOCAB_PARALLEL=1`, with `"draft_sample_method":"greedy"` |
+| vLLM 0013 | b2 | column-shards the drafter's replicated `main_proj` | off: `SPARK3_DSPARK_MAIN_PROJ_TP=1` |
+| vLLM 0019 | b2 | reads the custom-op schema once in `fill_defaults` (host overhead, short-prompt TTFT) | always on |
+| vLLM 0020 | b2 | compiles the dead-row kernels at warmup | always on (matters only with 0010 on) |
+| vLLM 0039, 0041 | b2 | disjoint fabricated-context and dummy blocks per KV group (non-finite rows at TP3 startup) | always on |
+| vLLM 0042 | b2 | marks the drafter's padding rows for the MoE routers | always on (`VLLM_MOE_SKIP_PADDING`, the fork's default 1) |
+| vLLM 0144 | b2 | runs the adaptive-verification draft budget eagerly; reports JIT compiles | always on |
+| vLLM 0014-0017 | b3 | sequence-parallel (SP) prefill: state, row-wise dataflow, CED encoder, local attention front | always on at TP > 1 (see 0018) |
+| vLLM 0018 | b3 | SP whenever a prompt-processing forward's padded hidden message exceeds the one-shot all-reduce limit (205 tokens at TP3); removes the earlier `SPARK3_DS41_PREFILL_SP_MIN_ROWS` switch | always on at TP > 1, no switch |
+| vLLM 0025 | b3 | splits the indexer's rows across ranks under SP | always on at TP > 1 |
+
+So with no switch set, this image behaves like the Lane A b1 lab image plus the b2 fixes marked "always on" and SP
+prefill. SP prefill has no off switch: it turns itself off only at tensor parallel size 1, with pipeline parallelism,
+static sequence parallelism or request boundary checkpoints. The rest of b2 (Engram projection TP, async Engram rows,
+the DSpark set) is off until an InferenceService sets its switch.
+
+Left out of the lab layers and so not carried: vLLM 0027 (explicit RoCE collective policy) and b12x 0010, which it
+needs and which conflicts with our b12x 0001 in `_roce_proxy.c`; and 0144's sibling 0184 (linear draft budget).
 
 ## MXFP4-CSF
 
@@ -119,9 +173,10 @@ only, nothing copied), to evaluate on the ring rather than bake in as image defa
   free device memory, which on unified memory is a likely contributor to the 2026-10-02 first-boot wedge.
 - DSpark 5 tokens, `max_num_batched_tokens` 4096, fail-closed memory guards (5 GiB at start, 3 GiB steady).
 
-Not in this image (that baseline's own patches, unlicensed, reachable only through upstream PRs if LIL takes them):
-sequence-parallel prefill, dead verification rows skipping routed experts, indexer top-k tie-break by position,
-async-proxy fences before TMA stage release, Engram projection sharding, display carve-out weights.
+Nothing is taken from that baseline, which still has no license. The same mechanisms (sequence-parallel prefill, dead
+verification rows skipping routed experts, indexer top-k tie-break by position, async-proxy fences before TMA stage
+release, Engram projection sharding) are now carried from `christopherowen/spark-ds41f`, a separate repository by the
+same author that is Apache-2.0 (see "Carried from spark-ds41f"). Display carve-out weights are not in this image.
 
 ## Build route
 
@@ -148,20 +203,28 @@ source-built NCCL. NOTICE says so, and the OCI label is
 ## What the build checks
 
 - `build/pins_gate.py`: `/src/vllm`, `/src/b12x` and `/src/nccl` are checkouts at the pinned commits of the pinned
-  repos, clean or differing by exactly the carried patches (recorded sha256, changed files equal the patches' files,
-  reversing them restores the pin, each marker present); every tracked `vllm/**/*.py` and `b12x/**/*.py` is
+  repos, clean or differing by exactly the carried patches, ours and then the spark-ds41f series in its listed order
+  (recorded sha256, changed files equal the patches' files, reversing them restores the pin, each marker present,
+  every series patch listed once); every tracked `vllm/**/*.py` and `b12x/**/*.py` is
   byte-identical in dist-packages; NCCL's installed library is the recorded source build of the pin plus its patch;
   one vllm is installed and carries the fork commit; each `PINNED_DISTS.txt` package is installed once at its
   version; all three commits and the torch, flashinfer-python and b12x versions must be named, so an emptied file
   fails. `tests/test_pins.py` breaks one pin at a time against real git fixtures (including the NCCL record,
-  library, patch and marker).
+  library, patch and marker, and the series rules: listed order, unlisted or missing files, rows). The committed
+  series is checked against the Lane A order, its rows, head SHAs, markers and scope (its package tree and upstream's
+  `tests/`), and `MD5SUMS.txt`. Two rules for this repository's own patches (scope to the package tree; no two patches
+  change one file) do not apply to the series, which changes upstream tests and is a stack; the Lane A lab layers had
+  to deselect those two tests for that reason, and `tests/test_pins.py` scopes them instead.
 - `build/deps_gate.py`: `pip check` conflicts on vllm, b12x or a pinned package fail unless a commented regex in
   `patches/PIP_CHECK_ALLOW.txt` accepts them (two entries, both inherited from the base: cuSPARSELt's platform tag and
   torch's NCCL 2.29.7 pin); AGPL in any installed distribution's license metadata fails.
 - `tests/test_imports_in_image.py`: the V4.1 import line, pinned versions, b12x's vLLM plugins, GB10-loadable cubins
   in `vllm/_C`, the fork's TP3 padding test, the b12x loader's io_uring build, the carried RoCE ring routing, the
-  fenced NCCL (record, sha256, `ncclGetVersion`), and MXFP4-CSF at TP3 (byte-exact slicing per rank, the guard, b12x's
-  CSF modules).
+  fenced NCCL (record, sha256, `ncclGetVersion`), MXFP4-CSF at TP3 (byte-exact slicing per rank, the guard, b12x's
+  CSF modules), and spark-ds41f 0178 (`--tokenizer-mode deepseek_v41` loads `DeepseekV41Renderer`, and the fork's
+  `tests/tokenizers_/test_deepseek_v41.py`, which 0178 updates, passes against the installed package). The fork tests
+  the b2 and b3 patches add or change are not run at build (four of the nine files need CUDA); the lab ran them in a
+  GPU test pod.
 - `build/prewarm.py`: imports the V4.1 serve path, the CSF reader and kernels, and RoCEnante's routing, and records
   b12x's compile-cache key. b12x's kernels themselves compile per shape on the GPU at first serve.
 
