@@ -3,3 +3,6 @@
 vllm local-inference-lab/vllm 1286ae9c9a3fd9376b82da39f7bc87f6a99037d9
 b12x local-inference-lab/b12x 78ee52c302abcef019d7ce17634c80b76f0975c9
 nccl NVIDIA/nccl 73cf112295c33aee2b895f329f592f2a9b4b0f97
+# Patch source, not a checkout (so not a pin line the gate reads): christopherowen/spark-ds41f
+# a2a3abae7b395f98ef64dcc77beef1584d756cd6, Apache-2.0 since ad4605b9e579c58d030f9527b7bb5a5cab9a4b7f. Its patches are
+# carried verbatim in vllm/spark-ds41f/ and b12x/spark-ds41f/ (each with a series file and an APPLIED.md).

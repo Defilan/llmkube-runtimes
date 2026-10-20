@@ -10,6 +10,8 @@
 # replaces the base's vLLM; b12x is installed from a pinned commit; carried source patches (patches/<name>/APPLIED.md)
 # are applied on top and drift-gated. New here: NCCL 2.30.7 is rebuilt from its release tag with the AArch64 IB
 # send-path fence (NVIDIA/nccl#2393), and the fork's MXFP4-CSF reader admits TP3 for DS4.1.
+# The spark-ds41f patches are verbatim upstream files (Apache-2.0, LICENSE.spark-ds41f-Apache-2.0) applied after this
+# repository's own carried patches, in the order of patches/<name>/spark-ds41f/series (build/apply_carried_patches.sh).
 # What is built or vendored here is Apache-2.0, BSD-3-Clause or MIT, and nothing is AGPL (build/deps_gate.py scans
 # every installed distribution). The image ALSO carries NVIDIA-proprietary components under NVIDIA's licenses: the
 # CUDA runtime and toolkit pieces from the base, and nvidia-cutlass-dsl 4.7.1 (+ libs), which the fork and b12x
@@ -18,10 +20,12 @@
 #   base        vllm/vllm-openai deepseekv41-flash-0909-arm64, by digest   Apache-2.0   torch 2.13.0+cu130, CUDA 13.0
 #   vLLM fork   local-inference-lab/vllm 1286ae9c (integration/            Apache-2.0   compiled here for sm_121a
 #               karmic-kraken-beta, tag vllm-jovian-cu134-beta-1286ae9c...)
-#               + DS4.1 MXFP4-CSF reader accepts TP3, carried
+#               + DS4.1 MXFP4-CSF reader accepts TP3, and three memory patches, carried
+#               + 21 christopherowen/spark-ds41f patches (Lane A series), carried
 #   b12x        local-inference-lab/b12x 78ee52c3 (1.3.0, karmic-kraken-    Apache-2.0   pure Python, kernels JIT at serve
 #               beta, tag b12x-cu134-beta-78ee52c3...)
 #               + local-inference-lab/b12x#457 (switchless-ring RoCE routing), carried until it merges
+#               + 3 christopherowen/spark-ds41f patches (top-k tie order, TMA fences), carried
 #   NCCL        NVIDIA/nccl v2.30.7-1 (73cf1122), compiled here for sm_120   Apache-2.0 + BSD-3-Clause
 #               + NVIDIA/nccl#2393 (AArch64 IB send-path fence, on dev as 05d026f4), carried until a release has it
 #   FlashInfer  0.6.18.post1 wheels by sha256 (the fork's pin)             Apache-2.0   replaces the base's 0.6.18
@@ -213,9 +217,10 @@ EOT
 COPY patches /opt/llmkube/patches
 COPY build /opt/llmkube/build
 COPY tests /opt/llmkube/tests
-# Attribution first, so the in-image tests can check it: the five top-level texts plus licenses/ (every component
-# the fork's CMake compiles into vllm/_C, at the revision it pins).
-COPY NOTICE LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0 LICENSE.cutlass-BSD-3-Clause LICENSE.nccl /opt/llmkube/
+# Attribution first, so the in-image tests can check it: the top-level texts (including spark-ds41f's, for the patch
+# series in patches/*/spark-ds41f) plus licenses/ (every component the fork's CMake compiles into vllm/_C, at the
+# revision it pins).
+COPY NOTICE LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0 LICENSE.cutlass-BSD-3-Clause LICENSE.nccl LICENSE.spark-ds41f-Apache-2.0 /opt/llmkube/
 COPY licenses /opt/llmkube/licenses
 
 # ---- 3.1 FlashInfer 0.6.18.post1, the fork's pin (requirements/cuda.txt, docker/Dockerfile FLASHINFER_VERSION) ----
@@ -259,10 +264,11 @@ EOT
 # ---- 3.3a patches carried on the pins (patches/<name>/APPLIED.md): the fork's onto this stage's /src/vllm (the wheel
 # above was compiled from the same patched tree), b12x's before b12x is installed, NCCL's onto /src/nccl (the library
 # installed in 3.3b was compiled from the same patched tree by the nccl-build stage) ----
-# build/apply_carried_patches.sh records a patch's new files with `git add -N` (intent to add), so the clean after
-# install keeps them and the pins gate sees them as part of the checkout; the gate proves each checkout is the pin plus
-# exactly these patches. Not `git apply --intent-to-add`: git 2.43 (this base) drops every other index entry when it
-# is used without --index.
+# build/apply_carried_patches.sh applies patches/<name>/*.patch in filename order, then the spark-ds41f series in
+# patches/<name>/spark-ds41f/ in the order of its series file (a stack: several of its patches change the same file),
+# and records a patch's new files with `git add -N` (intent to add), so the clean after install keeps them and the pins
+# gate sees them as part of the checkout; the gate proves each checkout is the pin plus exactly these patches, in order.
+# Not `git apply --intent-to-add`: git 2.43 (this base) drops every other index entry when it is used without --index.
 RUN bash /opt/llmkube/build/apply_carried_patches.sh /opt/llmkube/patches/vllm /src/vllm \
  && bash /opt/llmkube/build/apply_carried_patches.sh /opt/llmkube/patches/b12x /src/b12x \
  && bash /opt/llmkube/build/apply_carried_patches.sh /opt/llmkube/patches/nccl /src/nccl
@@ -323,7 +329,11 @@ ENV B12X_COMPILE_CACHE_DIR=/opt/llmkube/b12x-cache \
 # Triton stays enabled with 0 drivers. Set on these RUN lines only, never as ENV, so the image serves normally.
 RUN mkdir -p "$B12X_COMPILE_CACHE_DIR" && chmod 1777 "$B12X_COMPILE_CACHE_DIR" && CUDA_VISIBLE_DEVICES= python3 /opt/llmkube/build/prewarm.py
 
-# ---- 3.6 in-image tests (ours, plus the fork's own TP3 padding test from /src/vllm) ----
+# ---- 3.6 in-image tests (ours, plus the fork's own TP3 padding test and the DeepSeek V4.1 tokenizer tests that
+# spark-ds41f 0178 updates, from /src/vllm). Nothing is deselected: the two rules the Lane A lab layers had to deselect
+# (test_committed_patches_are_recorded_scoped_and_marked, test_committed_patch_files_do_not_overlap) hold this
+# repository's own patches in patches/<name>/*.patch, and the spark-ds41f series is checked by its own tests instead
+# (tests/test_pins.py explains why) ----
 RUN pip install -q pytest==9.1.1 && CUDA_VISIBLE_DEVICES= PYTHONDONTWRITEBYTECODE=1 DSV41_IN_IMAGE=1 python3 -m pytest -q -p no:cacheprovider /opt/llmkube/tests
 
 # ---- 3.7 receipts, entrypoint ----

@@ -170,7 +170,7 @@ def test_attribution_for_everything_compiled_into_vllm_C_travels():
     for name, marker in COMPILED_IN.items():
         assert marker in (lic / name).read_text(), name
     for top in ("NOTICE", "LICENSE.vllm-Apache-2.0", "LICENSE.b12x-Apache-2.0", "LICENSE.flashinfer-Apache-2.0",
-                "LICENSE.cutlass-BSD-3-Clause", "LICENSE.nccl"):
+                "LICENSE.cutlass-BSD-3-Clause", "LICENSE.nccl", "LICENSE.spark-ds41f-Apache-2.0"):
         assert (Path("/opt/llmkube") / top).is_file(), top
 
 
@@ -311,3 +311,41 @@ def test_b12x_csf_support_is_present():
     # loader builds, and the CSF scale-expansion kernels.
     from b12x.moe.fused_moe import CsfScalePlanes, Mxfp4CsfWeights  # noqa: F401
     importlib.import_module("b12x._lib.quant.mxfp4_csf")
+
+
+def test_spark_ds41f_0178_renderer_serves_the_v41_tokenizer_mode():
+    # patches/vllm/spark-ds41f/0178: the serving flags' --tokenizer-mode deepseek_v41 now renders with its new
+    # DeepseekV41Renderer (current-turn reasoning across tool results, tool-result images in call order).
+    from vllm.renderers.registry import RENDERER_REGISTRY
+    cls = RENDERER_REGISTRY.load_renderer_cls("deepseek_v41")
+    assert cls.__name__ == "DeepseekV41Renderer", cls
+
+
+# The fork's tests/ has no __init__.py and imports its siblings as `tests.tokenizers_...`, while /src/vllm cannot go on
+# sys.path (its vllm/ would shadow the installed package). So `tests` and `tests.tokenizers_` are registered as
+# packages rooted in /src/vllm/tests, and pytest runs from / as test_fork_tp3_padding_test_passes does.
+_FORK_TOKENIZER_RUNNER = """
+import os, sys, types
+import pytest
+src = sys.argv[1]
+tests = os.path.join(src, "tests")
+for name, path in (("tests", tests), ("tests.tokenizers_", os.path.join(tests, "tokenizers_"))):
+    module = types.ModuleType(name)
+    module.__path__ = [path]
+    sys.modules[name] = module
+sys.modules["tests"].tokenizers_ = sys.modules["tests.tokenizers_"]
+os.chdir("/")
+sys.exit(int(pytest.main(["-q", "-p", "no:cacheprovider", "--noconftest", "--import-mode=importlib",
+                          "--rootdir=" + src, os.path.join(tests, "tokenizers_", "test_deepseek_v41.py")])))
+"""
+
+
+def test_fork_deepseek_v41_tokenizer_tests_pass():
+    """The fork's tests/tokenizers_/test_deepseek_v41.py, which spark-ds41f 0178 updates (with its encoding.json
+    fixture), from the patched checkout against the installed package. PYTHONDONTWRITEBYTECODE keeps the checkout
+    clean for the pins gate."""
+    assert (VLLM_SRC / "tests" / "tokenizers_" / "test_deepseek_v41.py").is_file()
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    r = subprocess.run([sys.executable, "-B", "-c", _FORK_TOKENIZER_RUNNER, str(VLLM_SRC)], cwd="/", env=env,
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and " passed" in r.stdout and " failed" not in r.stdout, (r.stdout[-4000:], r.stderr[-2000:])

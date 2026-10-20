@@ -73,14 +73,15 @@ jobs:
         run: |
           cd cuda-gb10-vllm-dsv41-kk
           fail=0
-          for f in LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0 LICENSE.cutlass-BSD-3-Clause LICENSE.nccl NOTICE \
+          for f in LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0 LICENSE.cutlass-BSD-3-Clause LICENSE.nccl \
+                   LICENSE.spark-ds41f-Apache-2.0 NOTICE \
                    licenses/LICENSE.flash-attention-BSD-3-Clause licenses/LICENSE.tml-fa4-BSD-3-Clause \
                    licenses/LICENSE.FlashMLA-MIT licenses/LICENSE.DeepGEMM-MIT licenses/LICENSE.triton-MIT \
                    licenses/LICENSE.FlashKDA-MIT licenses/LICENSE.DeepSelect-MIT licenses/LICENSE.MSA-MIT \
                    licenses/LICENSE.qutlass-Apache-2.0; do
             [ -f "$f" ] || { echo "FAIL: $f missing; the license requires the notice to travel."; fail=1; }
           done
-          for f in LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0; do
+          for f in LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0 LICENSE.spark-ds41f-Apache-2.0; do
             grep -q 'Apache License' "$f" || { echo "FAIL: $f is not the Apache text."; fail=1; }
           done
           grep -q 'Redistribution and use in source and binary forms' LICENSE.cutlass-BSD-3-Clause || { echo "FAIL: LICENSE.cutlass-BSD-3-Clause is not the BSD-3-Clause text."; fail=1; }

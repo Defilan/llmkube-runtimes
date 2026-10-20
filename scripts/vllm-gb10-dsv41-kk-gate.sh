@@ -12,7 +12,8 @@ run test -f /opt/llmkube/python-tree.sha256
 run test -f /opt/llmkube/pip-freeze.txt
 run test -f /opt/llmkube/NOTICE
 run test -f /opt/llmkube/nccl-build.txt
-for f in LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0; do
+# LICENSE.spark-ds41f-Apache-2.0 covers the verbatim spark-ds41f patch series in patches/*/spark-ds41f (NOTICE).
+for f in LICENSE.vllm-Apache-2.0 LICENSE.b12x-Apache-2.0 LICENSE.flashinfer-Apache-2.0 LICENSE.spark-ds41f-Apache-2.0; do
   run bash -c "grep -q 'Apache License' /opt/llmkube/$f && grep -q 'Version 2.0, January 2004' /opt/llmkube/$f"
 done
 run bash -c "grep -q 'Redistribution and use in source and binary forms' /opt/llmkube/LICENSE.cutlass-BSD-3-Clause"
@@ -28,7 +29,7 @@ run bash -c "grep -q 'Apache License' /opt/llmkube/licenses/LICENSE.qutlass-Apac
 run bash -c '! grep -rli --exclude-dir=__pycache__ "GNU AFFERO" /opt/llmkube/patches /opt/llmkube/build /opt/llmkube/tests'
 run bash -c '! grep -rli --exclude-dir=.git "GNU AFFERO" /src/vllm /src/b12x /src/nccl'
 run python3 /opt/llmkube/build/deps_gate.py
-echo "PASS: receipt, stamp, freeze, NOTICE, the five top-level and nine compiled-in license texts present; no AGPL text in the image's own material, either source tree, or any installed distribution's license metadata; no pip check conflict on a pinned package"
+echo "PASS: receipt, stamp, freeze, NOTICE, the six top-level and nine compiled-in license texts present; no AGPL text in the image's own material, either source tree, or any installed distribution's license metadata; no pip check conflict on a pinned package"
 
 echo "== pins gate (checkouts at the pinned commits, installed trees identical, dist versions, install record, fenced NCCL) =="
 run python3 /opt/llmkube/build/pins_gate.py --site /usr/local/lib/python3.12/dist-packages
