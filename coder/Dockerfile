@@ -35,10 +35,10 @@ ARG LLMKUBE_REF=v0.8.27
 # Toolchain version pins. Keep in lockstep with the LLMKube Makefile
 # (HELM_VERSION, GOLANGCI_LINT_VERSION, CONTROLLER_TOOLS_VERSION) so the
 # in-cluster fast gate runs the same tool versions CI does.
-ARG GO_VERSION=1.26
-ARG HELM_VERSION=v3.16.4
-ARG GOLANGCI_LINT_VERSION=v2.12.2
-ARG CONTROLLER_TOOLS_VERSION=v0.19.0
+ARG GO_VERSION=1.27.3
+ARG HELM_VERSION=v3.22.1
+ARG GOLANGCI_LINT_VERSION=v2.15.0
+ARG CONTROLLER_TOOLS_VERSION=v0.23.0
 
 # Build stage. Pinned to $BUILDPLATFORM (the runner's native arch) and told to
 # cross-compile via GOOS/GOARCH, so the Go compiler always runs natively and the
@@ -77,7 +77,7 @@ RUN LLMKUBE_VERSION="$(cat /out/llmkube.version)" \
     && cp "$(find "$(go env GOPATH)/bin" -name controller-gen -type f | head -1)" /out/controller-gen \
     && test -x /out/foreman-agent && test -x /out/controller-gen
 
-# Runtime stage: golang:1.26 -- the same base the gate Job uses, so the coder's
+# Runtime stage: golang:${GO_VERSION} -- the same base the gate Job uses, so the coder's
 # `go build` / `go test` see a real Go toolchain (go + git ship in the image).
 # Add make + helm + golangci-lint + controller-gen so every fast-gate check
 # resolves without spawning a separate gate Job.
